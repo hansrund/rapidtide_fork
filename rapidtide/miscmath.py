@@ -20,6 +20,7 @@ import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.polynomial import Polynomial
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -59,9 +60,6 @@ except ImportError:
     donotusenumba = True
 else:
     donotusenumba = False
-
-# hard disable numba, since it is currently broken on arm
-donotusenumba = True
 
 
 # ----------------------------------------- Conditional jit handling ----------------------------------
@@ -290,7 +288,6 @@ def removeoutliers(vector, zerobad=True, outlierfac=3.0):
     return cleaneddata, themedian, sigmad
 
 
-@conditionaljit()
 def madnormalize(vector, returnnormfac=False):
     """
 
@@ -392,16 +389,19 @@ def ppnormalize(vector):
         return demeaned
 
 
-def imagevariance(thedata, thefilter, samplefreq, debug=False):
+def imagevariance(thedata, thefilter, samplefreq, meannorm=True, debug=False):
     if debug:
         print(f"IMAGEVARIANCE: {thedata.shape}, {thefilter}, {samplefreq}")
     filteredim = thedata * 0.0
     for thevoxel in range(thedata.shape[0]):
         filteredim[thevoxel, :] = thefilter.apply(samplefreq, thedata[thevoxel, :])
-    return np.var(filteredim, axis=1)
+    if meannorm:
+        return np.nan_to_num(np.var(filteredim, axis=1) / np.mean(thedata, axis=1))
+    else:
+        return np.var(filteredim, axis=1)
 
 
-@conditionaljit()
+# @conditionaljit()
 def corrnormalize(thedata, detrendorder=1, windowfunc="hamming"):
     """
 
@@ -505,7 +505,7 @@ def trendfilt(inputdata, order=3, ndevs=3.0, debug=False):
     """
     thetimepoints = np.arange(0.0, len(inputdata), 1.0) - len(inputdata) / 2.0
     try:
-        thecoffs = np.polyfit(thetimepoints, inputdata, order)
+        thecoffs = Polynomial.fit(thetimepoints, inputdata, order).convert().coef[::-1]
     except np.lib.RankWarning:
         thecoffs = [0.0, 0.0]
     thefittc = tide_fit.trendgen(thetimepoints, thecoffs, True)

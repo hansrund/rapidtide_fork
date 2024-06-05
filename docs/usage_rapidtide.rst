@@ -70,54 +70,177 @@ dimension for a correlation map.
 BIDS Outputs:
 ^^^^^^^^^^^^^
 
-.. csv-table::
+.. csv-table::  Output files produced by rapidtide
    :header: "Name", "Extension(s)", "Content", "When present"
-   :widths: 15, 15, 30, 10
+   :widths: 30, 10, 30, 20
 
-   "XXX_maxtime_map", ".nii.gz, .json", "Time of offset of the maximum of the similarity function", "Always"
-   "XXX_desc-maxtime_hist", ".tsv, .json", "Histogram of the maxtime map", "Always"
-   "XXX_maxcorr_map", ".nii.gz, .json", "Maximum similarity function value (usually the correlation coefficient, R)", "Always"
-   "XXX_desc-maxcorr_hist", ".tsv, .json", "Histogram of the maxcorr map", "Always"
-   "XXX_maxcorrsq_map", ".nii.gz, .json", "Maximum similarity function value, squared", "Always"
-   "XXX_desc-maxcorrsq_hist", ".tsv, .json", "Histogram of the maxcorrsq map", "Always"
-   "XXX_maxwidth_map", ".nii.gz, .json", "Width of the maximum of the similarity function", "Always"
-   "XXX_desc-maxwidth_hist", ".tsv, .json", "Histogram of the maxwidth map", "Always"
-   "XXX_MTT_map", ".nii.gz, .json", "Mean transit time (estimated)", "Always"
-   "XXX_corrfit_mask", ".nii.gz", "Mask showing where the similarity function fit succeeded", "Always"
-   "XXX_corrfitfailreason_map", ".nii.gz, .json", "A numerical code giving the reason a peak could not be found (0 if fit succeeded)", "Always"
-   "XXX_desc-corrfitwindow_info", ".nii.gz", "Values used for correlation peak fitting", "Always"
-   "XXX_desc-runoptions_info", ".json", "A detailed dump of all internal variables in the program.  Useful for debugging and data provenance", "Always"
-   "XXX_desc-lfofilterCleaned_bold", ".nii.gz, .json", "Filtered BOLD dataset after removing moving regressor", "If GLM filtering is enabled (default)"
-   "XXX_desc-lfofilterRemoved_bold", ".nii.gz, .json", "Scaled, voxelwise delayed moving regressor that has been removed from the dataset", "If GLM filtering is enabled (default) and ``--nolimitoutput`` is selected"
-   "XXX_desc-lfofilterEVs_bold", ".nii.gz, .json", "Voxel specific delayed sLFO regressors used as EVs for the GLM", "If GLM filtering is enabled (default) and ``--nolimitoutput`` is selected"
-   "XXX_desc-lfofilterCoeff_map", ".nii.gz, .json", "Magnitude of the delayed sLFO regressor from GLM filter", "If GLM filtering is enabled (default)"
-   "XXX_desc-lfofilterMean_map", ".nii.gz, .json", "Mean value over time, from GLM fit", "If GLM filtering is enabled (default)"
-   "XXX_desc-lfofilterNorm_map", ".nii.gz, .json", "GLM filter coefficient, divided by the voxel mean over time", "If GLM filtering is enabled (default)"
-   "XXX_desc-lfofilterR_map", ".nii.gz, .json", "R value for the GLM fit in the voxel", "If GLM filtering is enabled (default)"
-   "XXX_desc-lfofilterR2_map", ".nii.gz, .json", "R value for the GLM fit in the voxel, squared. Multiply by 100 to get percentage variance explained", "If GLM filtering is enabled (default)"
-   "XXX_desc-CVR_map", ".nii.gz, .json", "Cerebrovascular response, in units of % BOLD per unit of the supplied regressor (probably mmHg)", "If CVR mapping is enabled"
-   "XXX_desc-CVRR_map", ".nii.gz, .json", "R value for the CVR map fit in the voxel", "If CVR mapping is enabled"
-   "XXX_desc-CVRR2_map", ".nii.gz, .json", "R value for the CVR map fit in the voxel, squared. Multiply by 100 to get percentage variance explained", "If CVR mapping is enabled"
-   "XXX_desc-processed_mask", ".nii.gz", "Mask of all voxels in which the similarity function is calculated", "Always"
-   "XXX_desc-globalmean_mask", ".nii.gz", "Mask of voxels used to calculate the global mean signal", "This file will exist if no external regressor is specified"
-   "XXX_desc-refine_mask", ".nii.gz", "Mask of voxels used in the last estimate a refined version of the probe regressor", "Present if passes > 1"
-   "XXX_desc-shiftedtcs_bold", ".nii.gz", "The filtered input fMRI data, in voxels used for refinement, time shifted by the negated delay in every voxel so that the moving blood component should be aligned.", "Present if passes > 1 and ``--nolimitoutput`` is selected"
-   "XXX_desc-despeckle_mask", ".nii.gz", "Mask of the last set of voxels that had their time delays adjusted due to autocorrelations in the probe regressor", "Present if despecklepasses > 0"
-   "XXX_desc-corrout_info", ".nii.gz", "Full similarity function over the search range", "Always"
-   "XXX_desc-gaussout_info", ".nii.gz", "Gaussian fit to similarity function peak over the search range", "Always"
-   "XXX_desc-autocorr_timeseries", ".tsv, .json", "Autocorrelation of the probe regressor for each pass", "Always"
-   "XXX_desc-corrdistdata_info", ".tsv, .json", "Null correlations from the significance estimation for each pass", "Present if ``--numnull`` > 0"
-   "XXX_desc-nullsimfunc_hist", ".tsv, .json", "Histogram of the distribution of null correlation values for each pass", "Present if ``--numnull`` > 0"
-   "XXX_desc-plt0p050_mask", ".nii.gz", "Voxels where the maxcorr value exceeds the p < 0.05 significance level", "Present if ``--numnull`` > 0"
-   "XXX_desc-plt0p010_mask", ".nii.gz", "Voxels where the maxcorr value exceeds the p < 0.01 significance level", "Present if ``--numnull`` > 0"
-   "XXX_desc-plt0p005_mask", ".nii.gz", "Voxels where the maxcorr value exceeds the p < 0.005 significance level", "Present if ``--numnull`` > 0"
-   "XXX_desc-plt0p001_mask", ".nii.gz", "Voxels where the maxcorr value exceeds the p < 0.001 significance level", "Present if ``--numnull`` > 0"
-   "XXX_desc-globallag_hist", ".tsv, .json", "Histogram of peak correlation times between probe and all voxels, over all time lags, for each pass", "Always"
-   "XXX_desc-initialmovingregressor_timeseries", ".tsv, .json", "The raw and filtered initial probe regressor, at the original sampling resolution", "Always"
-   "XXX_desc-movingregressor_timeseries", ".tsv, .json", "The probe regressor used in each pass, at the time resolution of the data", "Always"
-   "XXX_desc-oversampledmovingregressor_timeseries", ".tsv, .json", "The probe regressor used in each pass, at the time resolution used for calculating the similarity function", "Always"
-   "XXX_desc-refinedmovingregressor_timeseries", ".tsv, .json", "The raw and filtered probe regressor produced by the refinement procedure, at the time resolution of the data", "Present if passes > 1"
+    "XXX_DONE", "txt", "Run status file", "If rapidtide successfully completed"
+    "XXX_RUNNING", "txt", "Run status file", "If rapidtide was started, but has not yet successfully completed"
+    "XXX_commandline", "txt", "Raw command line used to invoke rapidtide", "Always"
+    "XXX_desc-autocorr_timeseries", "tsv.gz, json", "Autocorrelation of the probe regressor for each pass", "Always"
+    "XXX_desc-cleansimdistdata_info", "tsv.gz, json", "Individual sham correlation datapoints after outlier removal", "Present if numnull > 0"
+    "XXX_desc-confoundfilterCleaned_bold", "nii.gz, json", "fMRI data after motion/confound regression", "Present if doing motion/confound regression and outputlevel is max"
+    "XXX_desc-confoundfilterR2_map", "nii.gz, json", "R2 of the motion/confound regression", "Present if doing motion/confound regression"
+    "XXX_desc-corrfit_mask", "nii.gz, json", "Voxels where correlation value was fit", "Always"
+    "XXX_desc-corrfitfailreason_info", "nii.gz, json", "Result codes for correlation fit", "Always"
+    "XXX_desc-corrfitwindow_info", "nii.gz, json", "The search window for the correlation peak fit", "Present if outputlevel is max"
+    "XXX_desc-corrout_info", "nii.gz, json", "Correlation function", "Present if outputlevel is ≥ normal"
+    "XXX_desc-corrtimes_timeseries", "tsv.gz, json", "", "Present if outputlevel is max"
+    "XXX_desc-despeckle_mask", "nii.gz, json", "Voxels that underwent despeckling in the final pass", "Present if despecklepasses > 0 (default) and outputlevel is max"
+    "XXX_desc-expandedconfounds_timeseries", "tsv.gz, json", "The expanded (via derivatives and powers) set of confound regressors used for prefiltering the data", "Present if doing motion/confound regression"
+    "XXX_desc-formattedruntimings_info", "tsv", "No description", "Always"
+    "XXX_desc-gaussout_info", "nii.gz, json", "Simulated correlation function", "Present if outputlevel is max"
+    "XXX_desc-globallag_hist", "tsv.gz, json", "Histogram of lag times from global lag calculation", "Always"
+    "XXX_desc-globalmean_mask", "nii.gz, json", "Voxels used to calculate global mean", "Always"
+    "XXX_desc-initialmovingregressor_timeseries", "tsv.gz, json", "The raw and filtered initial probe regressor, at the original sampling resolution", "Always"
+    "XXX_desc-lagtcgenerator_timeseries", "tsv.gz, json", "The lagged timecourse generator", "Present if passes > 1"
+    "XXX_desc-lfofilterCleaned_bold", "nii.gz, json", "fMRI data with sLFO signal filtered out", "Present if GLM is enabled (default) and outputlevel is ≥ less"
+    "XXX_desc-lfofilterCoeff_map", "nii.gz, json", "Fit coefficient", "Present if GLM is enabled (default) and outputlevel is ≥ normal"
+    "XXX_desc-lfofilterCoeffDerivN_map", "nii.gz, json", "Fit coefficient for the Nth temporal derivative", "Present if GLM is enabled (default), glmderivs > 0, and outputlevel is max"
+    "XXX_desc-lfofilterEV_bold", "nii.gz, json", "Shifted sLFO regressor to filter", "Present if despecklepasses > 0 (default) and outputlevel is max"
+    "XXX_desc-lfofilterEVDerivN_bold", "nii.gz, json", "Nth time derivative of shifted sLFO regressor", "Present if GLM is enabled (default), glmderivs > 0, and outputlevel is max"
+    "XXX_desc-lfofilterInbandVarianceAfter_map", "nii.gz, json", "Inband variance after filtering", "Present if GLM is enabled (default)"
+    "XXX_desc-lfofilterInbandVarianceBefore_map", "nii.gz, json", "Inband variance prior to filtering", "Present if GLM is enabled (default)"
+    "XXX_desc-lfofilterInbandVarianceChange_map", "nii.gz, json", "Change in inband variance after filtering, in percent", "Present if GLM is enabled (default)"
+    "XXX_desc-lfofilterMean_map", "nii.gz, json", "Intercept from GLM fit", "Present if GLM is enabled (default) and outputlevel is ≥ normal"
+    "XXX_desc-lfofilterNoiseRemoved_timeseries", "tsv.gz, json", "Variance over space of data removed by GLM filter at each timepoint", "Present if GLM is enabled (default)"
+    "XXX_desc-lfofilterNorm_map", "nii.gz, json", "Normalized fit coefficient", "Present if GLM is enabled (default) and outputlevel is ≥ normal"
+    "XXX_desc-lfofilterNormDerivN_map", "nii.gz, json", "Normalized fit coefficient for the Nth temporal derivative", "Present if GLM is enabled (default), glmderivs > 0, and outputlevel is max"
+    "XXX_desc-lfofilterR2_hist", "tsv.gz, json", "Histogram of GLM filter R2 values", "Present if GLM is enabled (default)"
+    "XXX_desc-lfofilterR2_map", "nii.gz, json", "Squared R value of the GLM fit (proportion of variance explained)", "Present if GLM is enabled (default) and outputlevel is ≥ less"
+    "XXX_desc-lfofilterR_map", "nii.gz, json", "R value of the GLM fit", "Present if GLM is enabled (default) and outputlevel is ≥ normal"
+    "XXX_desc-lfofilterRemoved_bold", "nii.gz, json", "sLFO signal filtered out of this voxel", "Present if GLM is enabled (default) and outputlevel is ≥ more"
+    "XXX_desc-lfofilterVarchange_hist", "tsv.gz, json", "Histogram of percent of inband variance removed by GLM filter", "Present if GLM is enabled (default)"
+    "XXX_desc-maxcorr_hist", "tsv.gz, json", "Histogram of maximum correlation coefficients", "Always"
+    "XXX_desc-maxcorr_map", "nii.gz, json", "Maximum correlation strength", "Always"
+    "XXX_desc-maxcorrsq_map", "nii.gz, json", "Squared maximum correlation strength (proportion of variance explained)", "Always"
+    "XXX_desc-maxtime_hist", "tsv.gz, json", "Histogram of maximum correlation times", "Always"
+    "XXX_desc-maxtime_map", "nii.gz, json", "Lag time in seconds", "Always"
+    "XXX_desc-maxwidth_hist", "tsv.gz, json", "Histogram of correlation peak widths", "Always"
+    "XXX_desc-maxwidth_map", "nii.gz, json", "Width of corrrelation peak", "Always"
+    "XXX_desc-mean_map", "nii.gz, json", "Voxelwise mean of fmri data", "Always"
+    "XXX_desc-mitimes_timeseries", "tsv.gz, json", "", "Present if outputlevel is max"
+    "XXX_desc-movingregressor_timeseries", "tsv.gz, json", "The probe regressor used in each pass, at the time resolution of the data", "Always"
+    "XXX_desc-MTT_map", "nii.gz, json", "Mean transit time (estimated)", "Always"
+    "XXX_desc-nullsimfunc_hist", "tsv.gz, json", "Null correlation histogram", "Present if numnull > 0"
+    "XXX_desc-orthogonalizedconfounds_timeseries", "tsv.gz, json", "The orthogonalized set of confound regressors used for prefiltering the data", "Present if doing motion/confound regression"
+    "XXX_desc-oversampledmovingregressor_timeseries", "tsv.gz, json", "The probe regressor used in each pass, at the time resolution used for calculating the similarity function", "Always"
+    "XXX_desc-plt0p001_mask", "nii.gz, json", "Voxels where the maxcorr value exceeds the p < 0.001 significance level", "Present if numnull > 0"
+    "XXX_desc-plt0p005_mask", "nii.gz, json", "Voxels where the maxcorr value exceeds the p < 0.005 significance level", "Present if numnull > 0"
+    "XXX_desc-plt0p010_mask", "nii.gz, json", "Voxels where the maxcorr value exceeds the p < 0.010 significance level", "Present if numnull > 0"
+    "XXX_desc-plt0p050_mask", "nii.gz, json", "Voxels where the maxcorr value exceeds the p < 0.050 significance level", "Present if numnull > 0"
+    "XXX_desc-processed_mask", "nii.gz", "No description", "Always"
+    "XXX_desc-refine_mask", "nii.gz, json", "Voxels used for refinement", "Present if passes > 1"
+    "XXX_desc-refinedmovingregressor_timeseries", "tsv.gz, json", "The raw and filtered probe regressor produced by the refinement procedure, at the time resolution of the data", "Present if passes > 1"
+    "XXX_desc-runoptions_info", "json", "A detailed dump of all internal variables in the program.  Useful for debugging and data provenance.", "Always"
+    "XXX_desc-shiftedtcs_bold", "nii.gz, json", "The filtered input fMRI data, in voxels used for refinement, time shifted by the negated delay in every voxel so that the moving blood component is aligned.", "Present if passes > 1 and outputlevel is max"
+    "XXX_desc-simdistdata_info", "tsv.gz, json", "Individual sham correlation datapoints", "Present if numnull > 0"
+    "XXX_desc-timepercentile_map", "nii.gz, json", "Percentile ranking of this voxels delay", "Always"
+    "XXX_desc-trimmedcorrtimes_timeseries", "tsv.gz, json", "", "Present if outputlevel is max"
+    "XXX_desc-trimmedmitimes_timeseries", "tsv.gz, json", "", "Present if outputlevel is max"
+    "XXX_formattedcommandline", "txt", "Command line used to invoke rapidtide, nicely formatted", "Always"
+    "XXX_log", "txt", "Diagnostic log file with a lot of informational output", "Always"
+    "XXX_memusage", "tsv", "Memory usage statistics for performance tuning", "Always"
 ..
+
+
+
+Output data size:
+^^^^^^^^^^^^^^^^^
+
+The amount of data output by rapidtide varies quite a bit, depending on your run options and the output level you select.
+What output level you use depends on what you are trying to do.  The vast majority of the runtime of rapidtide is spent
+estimating, extracting and refining the sLFO signal, and calculating the voxelwise blood arrival time delay and signal
+strength.  This produces a surprisingly small amount of data - the largest output files are the maps of the various
+hemodynamic parameters and some masks, each as large a single TR of the input data set.  So at a minimum (as in, you
+select ``"--outputlevel min"`` and do not run GLM denoising: ``"--noglm"``), you produce
+16 3D maps as NIFTI files, and a number of masks and timecourse files.  For a single resting state run in the HCP-YA
+dataset, this is ~13MB of data (compared to the input data file size of about 1GB).  If you want slightly more data
+to help you evaluate the fit quality, and make cool movies, you probably want to leave the outputlevel at the default of
+``"normal"``.
+
+You can calculate the output data size approximately with the following formulae (to first approximation, assuming
+that the image files dominate the size of the output data).
+
+FMRISIZE is the number of TRs in the input fMRI data.
+
+CORRFUNCSIZE is the size of the correlation function in TRs at the oversampled TR.
+
+* The TR oversampling factor is the smallest integer divisor of the fMRI TR that results in an oversampled TR <= 0.5 seconds.
+* CORRFUNCSIZE is the search range in seconds divided by the oversampled TR.
+
+The output sizes in TRs (with no motion regression) are as follows:
+
+.. csv-table::  Total image output data size in TRs
+   :header: "Output level", "GLM?", "Number of TRs"
+   :widths: 10, 10, 10
+
+    "min", "No", "16"
+    "less", "No", "16"
+    "normal", "No", "16 + CORRFUNCSIZE"
+    "more", "No", "16 + CORRFUNCSIZE"
+    "max", "No", "17 + CORRFUNCSIZE"
+    "min", "Yes", "24"
+    "min", "Yes", "24 + FMRISIZE"
+    "normal", "Yes", "24 + CORRFUNCSIZE + FMRISIZE"
+    "more", "Yes", "24 + CORRFUNCSIZE + 3*FMRISIZE"
+    "max", "Yes", "25 + 3*CORRFUNCSIZE + 4*FMRISIZE"
+..
+
+The data size is then this number of TRs times the size of 1 TR worth of data in the input fMRI file.
+
+
+As an example, the following table shows the size of the data produced by running a rapidtide analysis on one HCP-YA
+resting state dataset with various output levels, with and without doing GLM noise removal, either directly, or
+with the addition of one voxelwise time derivative.  The correlation function fit was calculated from -5 to 10
+seconds, resulting in a correlation function length of 41 points at the oversampled TR of 0.36 seconds. NB: motion
+regression is independent of GLM calculation, so to find the size of a GLM analysis with motion regression at a
+given output level, add the difference between the sizes of the motion regressed and non-motion regressed non-GLM
+analysis.
+
+
+.. csv-table::  Output data size from running rapidtide on one HCP-YA rsfMRI dataset
+   :header: "Output level", "Motion regression", "GLM?", "Derivatives", "Size in bytes"
+   :widths: 10, 10, 10, 10, 10
+
+    "min", "No", "No", "", "13M"
+    "min", "Yes", "No", "", "15M"
+    "min", "No", "Yes", "0", "17M"
+    "min", "No", "Yes", "1", "17M"
+    "less", "No", "No", "", "13M"
+    "less", "Yes", "No", "", "15M"
+    "less", "No", "Yes", "0", "1.2G"
+    "less", "No", "Yes", "1", "1.2G"
+    "less", "No", "No", "", "13M"
+    "less", "Yes", "No", "", "15M"
+    "less", "No", "Yes", "0", "1.2G"
+    "less", "No", "Yes", "1", "1.2G"
+    "normal", "No", "No", "", "86M"
+    "normal", "Yes", "No", "", "88M"
+    "normal", "No", "Yes", "0", "1.3G"
+    "normal", "No", "Yes", "1", "1.3G"
+    "more", "No", "No", "", "724M"
+    "more", "Yes", "No", "", "702M"
+    "more", "No", "Yes", "0", "3.2G"
+    "more", "No", "Yes", "1", "3.2G"
+    "max", "No", "No", "", "805M"
+    "max", "Yes", "No", "", "2.9G"
+    "max", "No", "Yes", "0", "4.5G"
+    "max", "No", "Yes", "1", "5.7G"
+..
+
+
+PRO TIP:  Extraction of the sLFO regressor and calculation of the delay and strength maps take the VAST majority of
+the computation time, and generates only a small fraction of the data of a full analysis.
+If you are doing computation on AWS (where compute is cheap, storage is semi-pricey,and download costs are extortionate), it makes
+sense to do everything except GLM filtering on your data, and download or store the outputs of that, only doing the
+GLM step at the time when you need to do it.  For example - running rapidtide on all of the HCP-YA resting state data
+generates less than 70GB of output data.  That's not too expensive to download, or store on S3, and costs nothing to
+upload.  The denoised data, however is huge (bigger than the input dataset), so you don't want to download it or even
+pay to store it for too long.  So make it when you need it, use it for whatever,
+then throw it away, and make it again if you need it again.
+This will save you an enormous amount of money.
+
 
 
 Usage:
@@ -142,7 +265,8 @@ make rapidtide work a lot better.  If you choose to regress out the motion signa
 rapidtide is happy to work on data that's been run through AROMA (not so much FIX - see a further discussion below).
 
 **Slice time correction** - Since rapidtide is looking for subtle time differences in the arrival of the
-sLFO signal, it will absolutely see slice acquisition time differences.  If you are doing noise removal, that's not
+sLFO signal, slice acquisition time differences will show up as artifactual offsets in the delay maps if you don't
+correct them beforehand.  If you are doing noise removal, that's not
 such a big deal, but if you're doing delay mapping, you'll get stripes in your delay maps, which tell you about the
 fMRI acquisition, but you care about physiology, so best to avoid that.  Unfortunately, Human Connectome Project data
 does NOT have slice time correction applied, and unless you want to rerun the entire processing chain to add it in,

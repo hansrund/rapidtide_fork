@@ -21,7 +21,6 @@ import numpy as np
 from scipy.ndimage import binary_erosion
 
 import rapidtide.filter as tide_filt
-import rapidtide.io as tide_io
 import rapidtide.stats as tide_stats
 from rapidtide.RapidtideDataset import RapidtideDataset
 
@@ -228,6 +227,7 @@ def qualitycheck(
     # put in some basic information
     outputdict["passes"] = thedataset.numberofpasses
     outputdict["filterlimits"] = thedataset.regressorfilterlimits
+    outputdict["simcalclimits"] = thedataset.regressorsimcalclimits
 
     # process the masks
     outputdict["mask"] = {}

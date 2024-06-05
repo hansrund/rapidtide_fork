@@ -256,6 +256,114 @@ def niftihdrfromarray(data):
     return nib.Nifti1Image(data, affine=np.eye(4)).header.copy()
 
 
+def savemaplist(
+    outputname,
+    maplist,
+    validvoxels,
+    destshape,
+    theheader,
+    bidsbasedict,
+    textio=False,
+    fileiscifti=False,
+    rt_floattype="float64",
+    cifti_hdr=None,
+    savejson=True,
+    debug=False,
+):
+    if textio:
+        try:
+            internalspaceshape = destshape[0]
+            timedim = destshape[1]
+            spaceonly = False
+        except TypeError:
+            internalspaceshape = destshape
+            spaceonly = True
+    else:
+        if fileiscifti:
+            spaceindex = len(destshape) - 1
+            timeindex = spaceindex - 1
+            internalspaceshape = destshape[spaceindex]
+            if destshape[timeindex] > 1:
+                spaceonly = False
+                timedim = destshape[timeindex]
+                isseries = True
+            else:
+                spaceonly = True
+                isseries = False
+        else:
+            internalspaceshape = int(destshape[0]) * int(destshape[1]) * int(destshape[2])
+            if len(destshape) == 3:
+                spaceonly = True
+            else:
+                spaceonly = False
+                timedim = destshape[3]
+    if spaceonly:
+        outmaparray = np.zeros(internalspaceshape, dtype=rt_floattype)
+    else:
+        outmaparray = np.zeros((internalspaceshape, timedim), dtype=rt_floattype)
+    for themap, mapsuffix, maptype, theunit, thedescription in maplist:
+        # set up the output array, and remap if warranted
+        if debug:
+            if validvoxels is None:
+                print(f"savemaplist: saving {mapsuffix}  to {destshape}")
+            else:
+                print(
+                    f"savemaplist: saving {mapsuffix}  to {destshape} from {np.shape(validvoxels)[0]} valid voxels"
+                )
+        if spaceonly:
+            outmaparray[:] = 0.0
+            if validvoxels is not None:
+                outmaparray[validvoxels] = themap[:].reshape((np.shape(validvoxels)[0]))
+            else:
+                outmaparray = themap[:].reshape((internalspaceshape))
+        else:
+            outmaparray[:, :] = 0.0
+            if validvoxels is not None:
+                outmaparray[validvoxels, :] = themap[:, :].reshape(
+                    (np.shape(validvoxels)[0], timedim)
+                )
+            else:
+                outmaparray = themap[:, :].reshape((internalspaceshape, timedim))
+
+        # actually write out the data
+        bidsdict = bidsbasedict.copy()
+        if theunit is not None:
+            bidsdict["Units"] = theunit
+        if thedescription is not None:
+            bidsdict["Description"] = thedescription
+        if textio:
+            writenpvecs(
+                outmaparray.reshape(destshape),
+                f"{outputname}_{mapsuffix}.txt",
+            )
+        else:
+            savename = f"{outputname}_desc-{mapsuffix}_{maptype}"
+            if savejson:
+                writedicttojson(bidsdict, savename + ".json")
+            if not fileiscifti:
+                savetonifti(outmaparray.reshape(destshape), theheader, savename)
+            else:
+                if isseries:
+                    savetocifti(
+                        outmaparray,
+                        cifti_hdr,
+                        theheader,
+                        savename,
+                        isseries=isseries,
+                        names=[mapsuffix],
+                    )
+                else:
+                    savetocifti(
+                        outmaparray,
+                        cifti_hdr,
+                        theheader,
+                        savename,
+                        isseries=isseries,
+                        start=theheader["toffset"],
+                        step=theheader["pixdim"][4],
+                    )
+
+
 def savetocifti(
     thearray,
     theciftiheader,
@@ -671,7 +779,7 @@ def checkspaceresmatch(sizes1, sizes2, tolerance=1.0e-3):
             return True
 
 
-def checkspacedimmatch(dims1, dims2):
+def checkspacedimmatch(dims1, dims2, verbose=False):
     r"""Check the dimension arrays of two nifti files to determine if the cover the same number of voxels in each dimension
 
     Parameters
@@ -688,14 +796,15 @@ def checkspacedimmatch(dims1, dims2):
     """
     for i in range(1, 4):
         if dims1[i] != dims2[i]:
-            print("File spatial voxels do not match")
-            print("dimension ", i, ":", dims1[i], "!=", dims2[i])
+            if verbose:
+                print("File spatial voxels do not match")
+                print("dimension ", i, ":", dims1[i], "!=", dims2[i])
             return False
         else:
             return True
 
 
-def checktimematch(dims1, dims2, numskip1=0, numskip2=0):
+def checktimematch(dims1, dims2, numskip1=0, numskip2=0, verbose=False):
     r"""Check the dimensions of two nifti files to determine if the cover the same number of timepoints
 
     Parameters
@@ -716,20 +825,21 @@ def checktimematch(dims1, dims2, numskip1=0, numskip2=0):
 
     """
     if (dims1[4] - numskip1) != (dims2[4] - numskip2):
-        print("File numbers of timepoints do not match")
-        print(
-            "dimension ",
-            4,
-            ":",
-            dims1[4],
-            "(skip ",
-            numskip1,
-            ") !=",
-            dims2[4],
-            " (skip ",
-            numskip2,
-            ")",
-        )
+        if verbose:
+            print("File numbers of timepoints do not match")
+            print(
+                "dimension ",
+                4,
+                ":",
+                dims1[4],
+                "(skip ",
+                numskip1,
+                ") !=",
+                dims2[4],
+                " (skip ",
+                numskip2,
+                ")",
+            )
         return False
     else:
         return True
@@ -797,7 +907,7 @@ def readparfile(filename):
     return motiondict
 
 
-def readmotion(filename):
+def readmotion(filename, colspec=None):
     r"""Reads motion regressors from filename (from the columns specified in colspec, if given)
 
     Parameters
@@ -891,17 +1001,50 @@ def readmotion(filename):
             ]
         )
     else:
-        print("cannot read files with extension", extension)
-        sys.exit()
-    """
-    motionlen = motiondict['xtrans'].shape[0]
-    motiontimeseries = readvecs(filename, colspec=colspec)
-    if motiontimeseries.shape[0] != 6:
-        print('readmotion: expect 6 motion regressors', motiontimeseries.shape[0], 'given')
-        sys.exit()
-    motiondict = {}
-    for j in range(0, 6):
-        motiondict[labels[j]] = 1.0 * motiontimeseries[j, :]"""
+        # handle weird files gracefully
+        allmotion = readvecs(filename, colspec=colspec)
+        if allmotion.shape[0] != 6:
+            print(
+                "motion files without a .par or .tsv extension must either have 6 columns or have 6 columns specified"
+            )
+            sys.exit()
+        # we are going to assume the columns are in FSL order, not that it really matters
+        motiondict = {}
+        motiondict["xtrans"] = allmotion[3, :] * 1.0
+        motiondict["ytrans"] = allmotion[4, :] * 1.0
+        motiondict["ztrans"] = allmotion[5, :] * 1.0
+        motiondict["maxtrans"] = np.max(
+            [
+                np.max(motiondict["xtrans"]),
+                np.max(motiondict["ytrans"]),
+                np.max(motiondict["ztrans"]),
+            ]
+        )
+        motiondict["mintrans"] = np.min(
+            [
+                np.min(motiondict["xtrans"]),
+                np.min(motiondict["ytrans"]),
+                np.min(motiondict["ztrans"]),
+            ]
+        )
+        motiondict["xrot"] = allmotion[0, :] * 1.0
+        motiondict["yrot"] = allmotion[1, :] * 1.0
+        motiondict["zrot"] = allmotion[2, :] * 1.0
+        motiondict["maxrot"] = np.max(
+            [
+                np.max(motiondict["xrot"]),
+                np.max(motiondict["yrot"]),
+                np.max(motiondict["zrot"]),
+            ]
+        )
+        motiondict["minrot"] = np.min(
+            [
+                np.min(motiondict["xrot"]),
+                np.min(motiondict["yrot"]),
+                np.min(motiondict["zrot"]),
+            ]
+        )
+
     return motiondict
 
 

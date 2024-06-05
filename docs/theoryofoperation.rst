@@ -23,7 +23,7 @@ observed that a large proportion of the "global mean signal", commonly referred
 to as "physiological noise" seen throughout in vivo datasets that quantify time
 dependant fluctuations in hemodynamic measures can be well modelled by a single
 timecourse with a range of time shifts.  This has been seen in fMRI and NIRS
-data recorded througout the brain and body, with time lags generally increasing
+data recorded throughout the brain and body, with time lags generally increasing
 at locations farther from the heart along the vasculature.  This appears to be a
 signal carried by the blood, as changes in blood oxygenation and/or volume that
 propagate with bulk blood flow.  The source of the signal is not known, being
@@ -38,18 +38,18 @@ every voxel gives you a lot of information  that's otherwise hard or impossible
 to obtain noninvasively, namely the arrival time of blood in each voxel, and the
 fraction of the variance in that voxel  that's accounted for by that moving
 signal, which is related to regional CBV (however there's also a factor that's
-due to blood oxygenation, so you have  to interpret it carefully).  You can use
+due to blood oxygenation, so you have to interpret it carefully).  You can use
 this information to understand the blood flow changes arising from vascular
-pathology, such as  stroke or moyamoya disease, or to potentially see changes in
+pathology, such as stroke or moyamoya disease, or to potentially see changes in
 blood flow due to a pharmacological intervention. In this case, the moving
 signal is not noise - it's the signal of interest.  So the various maps
 rapidtide produces can be used to describe hemodynamics.
 
 However, if you are interested in local rather than global hemodynamics,
-due to, say, neuronal activation, then this moving signal is rather pernicious
+due to, say, neuronal activation, then this moving signal constitutes rather pernicious
 in-band noise.  Global mean regression is often used to remove it, but this is
 not optimal - in fact it can generate spurious anticorrelations, which are
-not helpful.  Rapidtide will regress out the moving signal, appropriately
+not at all helpful.  Rapidtide will regress out the moving signal, appropriately
 delayed in each voxel.  This removes significantly more variance, and also
 avoids generating spurious correlations.  For a detailed consideration of this,
 look here [Erdogan2016]_.
@@ -88,7 +88,7 @@ the optimally delayed refined estimate of the systemic noise signal out of the d
 We have found that it works quite well for resting state noise removal while avoiding
 the major problems of global signal regression (which we refer to as "static global
 signal regression" as opposed to "dynamic global signal regression", which is
-what rapidtide does). For a detailed exploration of this topic, see Erdogan, 2016 (also 
+what rapidtide does). For a detailed exploration of this topic, we refer you again to [Erdogan2016]_ (also
 in the Physiology section below).
 
 
@@ -97,7 +97,7 @@ How does rapidtide work?
 In order to perform this task, rapidtide does a number of things:
 
 1. Obtain some initial estimate of the moving signal.
-2. Preprocess this signal to emphasize the bloodborne component.
+2. Preprocess this signal to selectively emphasize the bloodborne component.
 3. Analyze the signal to find and correct, if possible, non-ideal properties
    that may confound the estimation of time delays.
 4. Preprocess the incoming dataset to determine which voxels are suitable for
@@ -112,7 +112,7 @@ In order to perform this task, rapidtide does a number of things:
 9. Optionally regress the voxelwise time delayed moving signal out of the
    original dataset.
 
-Each of these steps has nuances which will be discussed below.
+Each of these steps (and substeps) has nuances which will be discussed below.
 
 
 Generation of Masks
@@ -394,7 +394,7 @@ step to find the peak time delay and strength of association between the two sig
 Signal preparation
 ``````````````````
 Prior to processing, each timecourse is processed in the same way as the moving regressor (oversampling, filtering,
-detrending, applying the same window function used on the reference regressor, and zeropadding the ends.
+detrending, applying the same window function used on the reference regressor, and zeropadding the ends.)
 
 
 Types of similarity function
@@ -455,12 +455,20 @@ Remember that the sLFO signal is bandlimited to 0.009 to 0.15Hz, which means the
 frequency component in the data has a period of about 6.67 seconds.  So at a minimum, the
 correlation peak will be several seconds across, so in addition to the peak location, there will
 be several points on either side that carry information about the peak location, height, and
-width.  If you fit the points around the peak, you'll get a much better estimate of the true
+width.  If you fit all the points around the peak, you'll get a much better estimate of the true
 delay and correlation value.
 
-Correlation peaks can be very broad due to low pass filtering, autocorrelation and window function choices,
+Correlation peaks can be a little messy; low pass filtering, weird autocorrelation properties due to
+nonuniform power spectra, window function choices,
 and baseline roll can lead to incorrect peak identification.  This
 makes the peak fitting process complicated.
+
+Despeckling
+```````````
+As mentioned above, your correlation function may be pseudoperiodic due to an unfortunate
+power spectrum.  At this point, the delay maps are subjected to a multipass despeckling operation,
+where voxels that look like they may have had incorrect fits are refit to be more consistent with
+their neighbors.
 
 Generating a better moving signal estimate (refinement)
 """""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -496,7 +504,7 @@ The new timecourse is then generated from the set of aligned, scaled timecourses
 
     **pca (default):** Perform a principal component analysis on the timecourses, reprojecting them onto a reduced set of components (specified by ``--pcacomponents`` - the default is the set explaining >=80% of total variance).  Average the result.
 
-    **(ica:** Perform an independent component analysis on the timecourses, reprojecting them onto a reduced set of components (specified by ``--pcacomponents`` - the default is the set explaining >=80% of total variance).  Average the result.
+    **ica:** Perform an independent component analysis on the timecourses, reprojecting them onto a reduced set of components (specified by ``--pcacomponents`` - the default is the set explaining >=80% of total variance).  Average the result.
 
     **weighted_average:** Each voxel is scaled with either the correlation strength from the current pass, the square of the correlation strength, or is left unscaled.  This is selected with the ``--refineweighting`` option - the default is "R2".  The timecourses are then averaged.
 

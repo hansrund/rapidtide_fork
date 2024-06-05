@@ -1,12 +1,66 @@
 # Release history
 
-## Version 2.8.7 (4/10/24)
+## Version 2.9.0 (6/3/24)
+* (rapidtide) Inband variance maps (Before, After, Change) are now always output if a GLM is performed.
+* (rapidtide) Tuned outputlevel configurations.  Added a new level, "less".
+* (rapidtide) Fixed globallaghist output.
+* (rapidtide2std) Updated for new file names, added option to transform GLM filtered data.
+* (fixtr) New utility to change the TR in a nifti header.
+* (reference) Made a new lut for JHU LVL1 NoVent to try to highlight heirarchy.
+* (package) Found and fixed a lot of weird, rare bugs (mostly typos).
+
+## Version 2.8.9.2 (5/22/24)
+* (docs) More updates to output file names, descriptions, and size tables.
+
+## Version 2.8.9.1 (5/21/24)
+* (rapidtide) Fixed a very old bug where the loggers were not properly closed, leading to duplicate output messages when rapidtide was run as a workflow.
+* (rapidtide) Fixed the selection logic so that shiftedtcs are written if output level is max, passes > 1, but GLM is no longer required.
+* (rapidtide) Added "Description" tag to output json files.
+* (rapidtide) Rationalized the names of some output files.
+* (docs) The output files list now reflects the current output selection logic.
+* (docs) Made a semiautomated procedure for updating the output table.
+* (package) Merged some dependabot PRs.
+
+## Version 2.8.9 (5/17/24)
+* (rapidtide) Simplified specification of output files.  Now use "--outputlevel" with values "min", "normal", "more", or "max" to specify what files are output.
+* (rapidtide) Improved motion regression and made it more flexible.
+* (rapidtide) Merged all bids nifti file writes into a common output routine.
+* (retroglm, rapidtide) Factored out all the GLM calculation code so it can be done (or redone with different options) after the fact with "retroglm" as a separate step.
+* (retroglm, rapidtide) Allow arbitrary number of derivatives of lagged regressors, and properly save all EVs and fit coefficients.
+* (niftidecomp) Now output raw variance explained in addition to variance explained ratio.
+* (tidepool) Now show graphically what part of the probe regressor was used for similarity calculation.
+* (package) Replaced the "mlregress" routine of unknown provenance with LinearRegression from sklearn.
+* (package) Merged some dependabot PRs.
+* (docs) Added a section on output data size.
+
+## Version 2.8.8 (4/30/24)
+* (rapidtide) Properly initialize "starttime" so that it will use the value in a json file, if present.
+* (rapidtide) Added new option to start from a random probe regressor.
+* (rapidtide) Moved performance options into their own section.
+* (rapidtide) Cleaned up code that reads (or rereads) data prior to GLM.
+* (rapidtide) You can specify MKL threads AND multiprocessing - multithreading is disabled and reenabled automatically as needed.
+* (rapidtide) Do refinement on padded data, to infer data past the ends of the imaging window.
+* (rapidtide) Save the padded, lagged timecourse generator.
+* (rapidtide) Scale voxel timecourses prior to PCA refinement.
+* (rapidtide) Change default refinement options.
+* (rapidtide) Started to increase the granularity of output file specification.
+* (fit) Added routines to do automated component selection from scree tests.
+* (package) Updated all calls to np.polyfit to the new Polynomial class.
+* (package) Merged some dependabot PRs.
+* (package) Made pyfftw an optional dependency.
+* (package) Fixed numba crashes (on Intel - not tested on ARM yet) and made it an optional dependency.
+* (package) Made compatible with Python 3.12.
+
+## Version 2.8.7 (4/17/24)
 * (rapidtide) Spatial filtering with the default kernel (1/2 the average voxel dimension) is now the default.
 * (rapidtide) Rewrote the lag time rank order calculation to use scipy.signal.rankdata.
 * (rapidtide) Moved some command line options to the "experimental" section, where they should have been to begin with.
-* (rapidtide, happy) Initial reorganization and expansion of confound regression code.
+* (rapidtide) Moved GLM options to a new "GLM" section.
+* (rapidtide) Do not automatically disable windowing for linear correlation.
+* (rapidtide, happy) Reorganized, expanded and rationalized confound regression code.
 * (tidepool) Replaced the flame colormap option with plasma and jet with turbo (similar, to what they replaced, but perceptually uniform).
 * (package) Made some proactive fixes for numpy 2.0.0 compatibility.
+* (package) Merged some dependabot PRs.
 * (tests) Removed some superfluous metadata from test data files.
 * (docs) Further extensive revisions.
 

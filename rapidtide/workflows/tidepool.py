@@ -636,6 +636,20 @@ def updateRegressor():
         text = pg.TextItem(text=thelabel, anchor=(0.0, 2.0), angle=0, fill=(0, 0, 0, 100))
         # regressor_ax.addItem(text)
 
+        # add in calculation limits
+        regressorsimcalclimits = currentdataset.regressorsimcalclimits
+        tctop = 1.25 * np.max(regressors[focusregressor].timedata)
+        tcbottom = 1.25 * np.min(regressors[focusregressor].timedata)
+        lowerlim = regressorsimcalclimits[0]
+        if regressorsimcalclimits[1] == -1:
+            upperlim = regressors[focusregressor].timeaxis[-1]
+        else:
+            upperlim = regressorsimcalclimits[1]
+        bottomleft = [lowerlim, tcbottom]
+        size = [upperlim - lowerlim, tctop - tcbottom]
+        therectangle = RectangleItem(bottomleft, size)
+        regressor_ax.addItem(therectangle)
+
 
 def updateRegressorSpectrum():
     global regressorspectrum_ax, liveplots, currentdataset
@@ -1287,14 +1301,15 @@ def printfocusvals():
                         logstatus(ui.logOutput, outstring)
                     else:
                         if focusval > 0.0:
-                            failstring = simfuncFitter.diagnosefail(np.uint32(focusval))
-                            outstring = (
-                                "\t"
-                                + str(overlays[key].label.ljust(26))
-                                + str(":\n\t    ")
-                                + failstring.replace(", ", "\n\t    ")
-                            )
-                            logstatus(ui.logOutput, outstring)
+                            if simfuncFitter is not None:
+                                failstring = simfuncFitter.diagnosefail(np.uint32(focusval))
+                                outstring = (
+                                    "\t"
+                                    + str(overlays[key].label.ljust(26))
+                                    + str(":\n\t    ")
+                                    + failstring.replace(", ", "\n\t    ")
+                                )
+                                logstatus(ui.logOutput, outstring)
                 else:
                     outstring = (
                         "\t"
@@ -1354,7 +1369,7 @@ def tidepool(args):
     global focusmap, bgmap
     global maps
     global roi
-    global overlays, regressors, regressorfilterlimits, loadedfuncmaps, atlasstats, averagingmode
+    global overlays, regressors, regressorfilterlimits, regressorsimcalclimits, loadedfuncmaps, atlasstats, averagingmode
     global mainwin, orthoimages, overlaybuttons, panetomap
     global img_colorbar, LUT_alpha, LUT_endalpha
     global lg_imgsize, scalefacx, scalefacy, scalefacz
@@ -1368,6 +1383,8 @@ def tidepool(args):
     global atlasaveragingdone
     global currentdataset
     global verbosity
+    global simfuncFitter
+    global simfunc_ax, simfuncCurve, simfuncfitCurve, simfuncTLine, simfuncPeakMarker, simfuncCurvePoint, simfuncCaption
 
     # initialize default values
     averagingmode = None
@@ -1390,6 +1407,7 @@ def tidepool(args):
     zpos = 0
     tpos = 0
     verbosity = 0
+    simfuncFitter = None
 
     if args.compact:
         import rapidtide.tidepoolTemplate_alt as uiTemplate
@@ -1651,13 +1669,6 @@ def tidepool(args):
     ui.std_radioButton.setDisabled(True)
     ui.MAD_radioButton.setDisabled(True)
 
-    """ui.raw_radioButton.hide()
-    ui.mean_radioButton.hide()
-    ui.median_radioButton.hide()
-    ui.robustmean_radioButton.hide()
-    ui.std_radioButton.hide()
-    ui.MAD_radioButton.hide()"""
-
     ui.raw_radioButton.clicked.connect(raw_radioButton_clicked)
     ui.mean_radioButton.clicked.connect(mean_radioButton_clicked)
     ui.median_radioButton.clicked.connect(median_radioButton_clicked)
@@ -1789,7 +1800,10 @@ def tidepool(args):
     currentdataset = thesubjects[-1]
     print("loading datasets...")
 
+    print("getting regressors")
     regressors = currentdataset.getregressors()
+
+    print("getting overlays")
     overlays = currentdataset.getoverlays()
     try:
         test = overlays["corrout"].display_state
@@ -1797,6 +1811,7 @@ def tidepool(args):
         usecorrout = False
 
     # activate the appropriate regressor radio buttons
+    print("activating radio buttons")
     if "prefilt" in regressors.keys():
         ui.prefilt_radioButton.setDisabled(False)
         ui.prefilt_radioButton.show()
@@ -1839,6 +1854,7 @@ def tidepool(args):
         bgmap = None
 
     # set up the timecourse plot window
+    print("setting up timecourse plot window")
     xpos = int(currentdataset.xdim) // 2
     ypos = int(currentdataset.ydim) // 2
     zpos = int(currentdataset.zdim) // 2
@@ -1865,6 +1881,7 @@ def tidepool(args):
     tpos = 0
 
     # set position and scale of images
+    print("setting position and scale of images")
     lg_imgsize = 256.0
     sm_imgsize = 32.0
     xfov = currentdataset.xdim * currentdataset.xsize
@@ -1976,7 +1993,6 @@ def tidepool(args):
             enableMouse=True,
             verbose=verbosity,
         )
-    mainwin.updated.connect(updateXYZFromMainWin)
 
     orthoimages = {}
     if verbosity > 1:
@@ -2050,7 +2066,6 @@ def tidepool(args):
     # set up the similarity function window
     if verbosity > 1:
         print("about to set up the similarity function window")
-    global simfunc_ax, simfuncCurve, simfuncfitCurve, simfuncTLine, simfuncPeakMarker, simfuncCurvePoint, simfuncCaption, simfuncFitter
 
     try:
         thesimfunc_groupBox = ui.simfunc_groupBox
@@ -2097,8 +2112,12 @@ def tidepool(args):
         simfuncCaption.setParentItem(simfuncCurvePoint)
         simfuncCurve.scene().sigMouseClicked.connect(updateTimepoint)
         simfuncFitter = SimilarityFunctionFitter()
+        print("simfuncFitter has been defined")
     else:
         simfunc_ax = None
+
+    # update the main window now that simfuncFitter has been defined
+    mainwin.updated.connect(updateXYZFromMainWin)
 
     # set up the regressor timecourse window
     if verbosity > 1:

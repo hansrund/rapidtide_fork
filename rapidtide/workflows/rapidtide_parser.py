@@ -28,6 +28,15 @@ import rapidtide.io as tide_io
 import rapidtide.util as tide_util
 import rapidtide.workflows.parser_funcs as pf
 
+
+# Create a sentinel.
+# from https://stackoverflow.com/questions/58594956/find-out-which-arguments-were-passed-explicitly-in-argparse
+class _Sentinel:
+    pass
+
+
+sentinel = _Sentinel()
+
 LGR = logging.getLogger(__name__)
 
 # Some default settings
@@ -59,8 +68,8 @@ DEFAULT_CORRWEIGHTING = "regressor"
 DEFAULT_CORRTYPE = "linear"
 DEFAULT_SIMILARITYMETRIC = "correlation"
 DEFAULT_PEAKFIT_TYPE = "gauss"
-DEFAULT_REFINE_PRENORM = "None"
-DEFAULT_REFINE_WEIGHTING = "R2"
+DEFAULT_REFINE_PRENORM = "var"
+DEFAULT_REFINE_WEIGHTING = "None"
 DEFAULT_REFINE_PCACOMPONENTS = 0.8
 DEFAULT_GLMDERIVS = 0
 
@@ -81,6 +90,8 @@ DEFAULT_CVRMAPPING_LAGMAX = 20.0
 DEFAULT_CVRMAPPING_FILTER_LOWERPASS = 0.0
 DEFAULT_CVRMAPPING_FILTER_UPPERPASS = 0.01
 DEFAULT_CVRMAPPING_DESPECKLE_PASSES = 4
+
+DEFAULT_OUTPUTLEVEL = "normal"
 
 
 def _get_parser():
@@ -142,7 +153,7 @@ def _get_parser():
             "Preset for delay mapping analysis - this is a macro that "
             f"sets searchrange=({DEFAULT_DELAYMAPPING_LAGMIN}, {DEFAULT_DELAYMAPPING_LAGMAX}), "
             f"passes={DEFAULT_DELAYMAPPING_PASSES}, despeckle_passes={DEFAULT_DELAYMAPPING_DESPECKLE_PASSES}, "
-            "refineoffset=True, pickleft=True, limitoutput=True, "
+            "refineoffset=True, pickleft=True, outputlevel='normal', "
             "doglmfilt=False. "
             "Any of these options can be overridden with the appropriate "
             "additional arguments."
@@ -174,7 +185,7 @@ def _get_parser():
         help=(
             "Treat this run as an initial pass to locate good candidate voxels for global mean "
             "regressor generation.  This sets: passes=1, pickleft=True, despecklepasses=0, "
-            "refinedespeckle=False, limitoutput=True, doglmfilt=False, saveintermediatemaps=False."
+            "refinedespeckle=False, outputlevel='normal', doglmfilt=False, saveintermediatemaps=False."
         ),
         default=False,
     )
@@ -436,10 +447,11 @@ def _get_parser():
         dest="globalsignalmethod",
         action="store",
         type=str,
-        choices=["sum", "meanscale", "pca"],
+        choices=["sum", "meanscale", "pca", "random"],
         help=(
             "The method for constructing the initial global signal regressor - straight summation, "
-            "mean scaling each voxel prior to summation, or MLE PCA of the voxels in the global signal mask. "
+            "mean scaling each voxel prior to summation, MLE PCA of the voxels in the global signal mask, "
+            "or initializing using random noise."
             f'Default is "{DEFAULT_GLOBALSIGNAL_METHOD}."'
         ),
         default=DEFAULT_GLOBALSIGNAL_METHOD,
@@ -585,7 +597,7 @@ def _get_parser():
             "file, corresponding in the first TR of the fMRI "
             "file (default is 0.0)."
         ),
-        default=0.0,
+        default=None,
     )
     corr.add_argument(
         "--corrweighting",
@@ -1012,13 +1024,77 @@ def _get_parser():
         default=DEFAULT_MAXPASSES,
     )
 
+    # GLM noise removal options
+    glm = parser.add_argument_group("GLM noise removal options")
+    glm.add_argument(
+        "--noglm",
+        dest="doglmfilt",
+        action="store_false",
+        help=(
+            "Turn off GLM filtering to remove delayed "
+            "regressor from each voxel (disables output of "
+            "fitNorm)."
+        ),
+        default=True,
+    )
+    glm.add_argument(
+        "--glmsourcefile",
+        dest="glmsourcefile",
+        action="store",
+        type=lambda x: pf.is_valid_file(parser, x),
+        metavar="FILE",
+        help=(
+            "Regress delayed regressors out of FILE instead "
+            "of the initial fmri file used to estimate "
+            "delays."
+        ),
+        default=None,
+    )
+    glm.add_argument(
+        "--preservefiltering",
+        dest="preservefiltering",
+        action="store_true",
+        help="Don't reread data prior to performing GLM.",
+        default=False,
+    )
+    glm.add_argument(
+        "--glmderivs",
+        dest="glmderivs",
+        action="store",
+        type=int,
+        metavar="NDERIVS",
+        help=(
+            f"When doing final GLM, include derivatives up to NDERIVS order. Default is {DEFAULT_GLMDERIVS}"
+        ),
+        default=DEFAULT_GLMDERIVS,
+    )
+
     # Output options
     output = parser.add_argument_group("Output options")
+    output.add_argument(
+        "--outputlevel",
+        dest="outputlevel",
+        action="store",
+        type=str,
+        choices=["min", "less", "normal", "more", "max"],
+        help=(
+            "The level of file output produced.  'min' produces only absolutely essential files, 'less' adds in "
+            "the GLM filtered data (rather than just filter efficacy metrics), 'normal' saves what you "
+            "would typically want around for interactive data exploration, "
+            "'more' adds files that are sometimes useful, and 'max' outputs anything you might possibly want. "
+            "Selecting 'max' will produce ~3x your input datafile size as output.  "
+            f'Default is "{DEFAULT_OUTPUTLEVEL}."'
+        ),
+        default=DEFAULT_OUTPUTLEVEL,
+    )
     output.add_argument(
         "--nolimitoutput",
         dest="limitoutput",
         action="store_false",
-        help=("Save some of the large and rarely used files."),
+        help=(
+            "Save some of the large and rarely used files.  "
+            "NB: THIS IS NOW DEPRECATED: Use '--outputlevel max' instead."
+        ),
         default=True,
     )
     output.add_argument(
@@ -1038,37 +1114,6 @@ def _get_parser():
         default=DEFAULT_HISTLEN,
     )
     output.add_argument(
-        "--glmsourcefile",
-        dest="glmsourcefile",
-        action="store",
-        type=lambda x: pf.is_valid_file(parser, x),
-        metavar="FILE",
-        help=(
-            "Regress delayed regressors out of FILE instead "
-            "of the initial fmri file used to estimate "
-            "delays."
-        ),
-        default=None,
-    )
-    output.add_argument(
-        "--noglm",
-        dest="doglmfilt",
-        action="store_false",
-        help=(
-            "Turn off GLM filtering to remove delayed "
-            "regressor from each voxel (disables output of "
-            "fitNorm)."
-        ),
-        default=True,
-    )
-    output.add_argument(
-        "--preservefiltering",
-        dest="preservefiltering",
-        action="store_true",
-        help="Don't reread data prior to performing GLM.",
-        default=False,
-    )
-    output.add_argument(
         "--saveintermediatemaps",
         dest="saveintermediatemaps",
         action="store_true",
@@ -1086,13 +1131,61 @@ def _get_parser():
     # Add version options
     pf.addversionopts(parser)
 
+    # Performance options
+    perf = parser.add_argument_group("Performance options")
+    perf.add_argument(
+        "--nprocs",
+        dest="nprocs",
+        action="store",
+        type=int,
+        metavar="NPROCS",
+        help=(
+            "Use NPROCS worker processes for multiprocessing. "
+            "Setting NPROCS to less than 1 sets the number of "
+            "worker processes to n_cpus (unless --reservecpu is used)."
+        ),
+        default=1,
+    )
+    perf.add_argument(
+        "--reservecpu",
+        dest="reservecpu",
+        action="store_true",
+        help=(
+            "When automatically setting nprocs, reserve one CPU for "
+            "process management rather than using them all for worker threads."
+        ),
+        default=False,
+    )
+    perf.add_argument(
+        "--mklthreads",
+        dest="mklthreads",
+        action="store",
+        type=int,
+        metavar="MKLTHREADS",
+        help=(
+            "If mkl library is installed, use no more than MKLTHREADS worker "
+            "threads in accelerated numpy calls.  Set to -1 to use the maximum available.  Default is 1."
+        ),
+        default=1,
+    )
+    perf.add_argument(
+        "--nonumba",
+        dest="nonumba",
+        action="store_true",
+        help=(
+            "By default, numba is used if present.  Use this option to disable jit "
+            "compilation with numba even if it is installed."
+        ),
+        default=False,
+    )
+
     # Miscellaneous options
     misc = parser.add_argument_group("Miscellaneous options")
     misc.add_argument(
         "--noprogressbar",
         dest="showprogressbar",
         action="store_false",
-        help=("Will disable showing progress bars (helpful if stdout is going " "to a file)."),
+        help=("Will disable showing progress bars (helpful if stdout is going to a file)."),
         default=True,
     )
     misc.add_argument(
@@ -1143,13 +1236,6 @@ def _get_parser():
         default=False,
     )
     misc.add_argument(
-        "--nonumba",
-        dest="nonumba",
-        action="store_true",
-        help="Disable jit compilation with numba.",
-        default=False,
-    )
-    misc.add_argument(
         "--nosharedmem",
         dest="sharedmem",
         action="store_false",
@@ -1161,38 +1247,6 @@ def _get_parser():
         dest="memprofile",
         action="store_true",
         help=("Enable memory profiling - " "warning: this slows things down a lot."),
-        default=False,
-    )
-    misc.add_argument(
-        "--mklthreads",
-        dest="mklthreads",
-        action="store",
-        type=int,
-        metavar="MKLTHREADS",
-        help=("Use no more than MKLTHREADS worker threads in accelerated numpy " "calls."),
-        default=1,
-    )
-    misc.add_argument(
-        "--nprocs",
-        dest="nprocs",
-        action="store",
-        type=int,
-        metavar="NPROCS",
-        help=(
-            "Use NPROCS worker processes for multiprocessing. "
-            "Setting NPROCS to less than 1 sets the number of "
-            "worker processes to n_cpus (unless --reservecpu is used)."
-        ),
-        default=1,
-    )
-    misc.add_argument(
-        "--reservecpu",
-        dest="reservecpu",
-        action="store_true",
-        help=(
-            "When automatically setting nprocs, reserve one CPU for "
-            "process management rather than using them all for worker threads."
-        ),
         default=False,
     )
     pf.addtagopts(misc)
@@ -1246,17 +1300,6 @@ def _get_parser():
             "of EPSILON in any dimension.  By default, this is set to 0.0, requiring an exact match. "
         ),
         default=0.0,
-    )
-    experimental.add_argument(
-        "--glmderivs",
-        dest="glmderivs",
-        action="store",
-        type=int,
-        metavar="NDERIVS",
-        help=(
-            f"When doing final GLM, include derivatives up to NDERIVS order. Default is {DEFAULT_GLMDERIVS}"
-        ),
-        default=DEFAULT_GLMDERIVS,
     )
     experimental.add_argument(
         "--echocancel",
@@ -1402,6 +1445,13 @@ def _get_parser():
         dest="debug",
         action="store_true",
         help=("Enable additional debugging output."),
+        default=False,
+    )
+    debugging.add_argument(
+        "--focaldebug",
+        dest="focaldebug",
+        action="store_true",
+        help=("Enable targetted additional debugging output (used during development)."),
         default=False,
     )
     debugging.add_argument(
@@ -1571,12 +1621,6 @@ def process_args(inputargs=None):
         # pf.setifnotset(args, "windowfunc", "None")
     else:
         args["corrpadding"] = 0
-
-    # output options
-    args["savedespecklemasks"] = True
-    args["saveglmfiltered"] = True
-    args["saveconfoundfiltered"] = False
-    args["savecorrmask"] = True
 
     # refinement options
     args["filterbeforePCA"] = True
@@ -1775,8 +1819,8 @@ def process_args(inputargs=None):
 
     # motion processing
     if args["motionfilespec"] is not None:
-        (args["motionfilename"], args["motionfilevals"]) = tide_io.processnamespec(
-            args["motionfilespec"], "Using columns in ", "as motion regressors."
+        (args["motionfilename"], args["motionfilecolspec"]) = tide_io.parsefilespec(
+            args["motionfilespec"]
         )
     else:
         args["motionfilename"] = None
@@ -1790,7 +1834,7 @@ def process_args(inputargs=None):
         pf.setifnotset(args, "lagmax", DEFAULT_DELAYMAPPING_LAGMAX)
         args["refineoffset"] = True
         args["pickleft"] = True
-        args["limitoutput"] = True
+        args["outputlevel"] = "normal"
         pf.setifnotset(args, "doglmfilt", False)
 
     if args["denoising"]:
@@ -1821,7 +1865,7 @@ def process_args(inputargs=None):
         pf.setifnotset(args, "lagmax", DEFAULT_CVRMAPPING_LAGMAX)
         args["preservefiltering"] = True
         args["passes"] = 1
-        args["limitoutput"] = False
+        args["outputlevel"] = "min"
         args["doglmfilt"] = False
 
     if args["globalpreselect"]:
@@ -1830,7 +1874,7 @@ def process_args(inputargs=None):
         args["pickleft"] = True
         args["despeckle_passes"] = 0
         args["refinedespeckle"] = False
-        args["limitoutput"] = True
+        args["outputlevel"] = "normal"
         pf.setifnotset(args, "doglmfilt", False)
         args["saveintermediatemaps"] = False
 
@@ -1858,12 +1902,63 @@ def process_args(inputargs=None):
         args["despeckle_passes"] = 0
 
     # process limitoutput
-    if args["limitoutput"]:
-        args["savemovingsignal"] = False
+    if not args["limitoutput"]:
+        args["outputlevel"] = "max"
+
+    # output options
+    if args["outputlevel"] == "min":
+        args["saveconfoundfiltered"] = False
+        args["savegaussout"] = False
+        args["savecorrtimes"] = False
         args["savelagregressors"] = False
-    else:
-        args["savemovingsignal"] = True
+        args["savedespecklemasks"] = False
+        args["saveminimumglmfiles"] = False
+        args["savenormalglmfiles"] = False
+        args["savemovingsignal"] = False
+        args["saveallglmfiles"] = False
+    elif args["outputlevel"] == "less":
+        args["saveconfoundfiltered"] = False
+        args["savegaussout"] = False
+        args["savecorrtimes"] = False
+        args["savelagregressors"] = False
+        args["savedespecklemasks"] = False
+        args["saveminimumglmfiles"] = True
+        args["savenormalglmfiles"] = False
+        args["savemovingsignal"] = False
+        args["saveallglmfiles"] = False
+    elif args["outputlevel"] == "normal":
+        args["saveconfoundfiltered"] = False
+        args["savegaussout"] = False
+        args["savecorrtimes"] = False
+        args["savelagregressors"] = False
+        args["savedespecklemasks"] = False
+        args["saveminimumglmfiles"] = True
+        args["savenormalglmfiles"] = True
+        args["savemovingsignal"] = False
+        args["saveallglmfiles"] = False
+    elif args["outputlevel"] == "more":
+        args["saveconfoundfiltered"] = False
+        args["savegaussout"] = False
+        args["savecorrtimes"] = False
         args["savelagregressors"] = True
+        args["savedespecklemasks"] = False
+        args["saveminimumglmfiles"] = True
+        args["savenormalglmfiles"] = True
+        args["savemovingsignal"] = True
+        args["saveallglmfiles"] = False
+    elif args["outputlevel"] == "max":
+        args["saveconfoundfiltered"] = True
+        args["savegaussout"] = True
+        args["savecorrtimes"] = True
+        args["savelagregressors"] = True
+        args["savedespecklemasks"] = True
+        args["saveminimumglmfiles"] = True
+        args["savenormalglmfiles"] = True
+        args["savemovingsignal"] = True
+        args["saveallglmfiles"] = True
+    else:
+        print(f"illegal output level {args['outputlevel']}")
+        sys.exit()
 
     # dispersion calculation
     args["dispersioncalc_lower"] = args["lagmin"]
@@ -1874,6 +1969,9 @@ def process_args(inputargs=None):
             args["dispersioncalc_step"],
         ]
     )
+
+    # this is new enough to do retrospective GLM
+    args["retroglmcompatible"] = True
 
     LGR.debug("\nafter postprocessing\n{}".format(args))
 
