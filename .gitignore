@@ -6,6 +6,8 @@ changecalls
 
 .circleci/*.safe
 
+.vscode
+
 # mac desktop files
 .DS_Store
 */.DS_Store
@@ -21,6 +23,20 @@ rapidtide/experimental
 rapidtide/data/examples/dst/*
 rapidtide/tests/tmp/[abcdefghijklmnopqrstuvwxyz]*
 rapidtide/tests/*.jpg
+
+# test data in databundle dir
+rapidtide/data/examples/databundle/happytest/
+rapidtide/data/examples/databundle/*.json
+rapidtide/data/examples/databundle/*.nii
+rapidtide/data/examples/databundle/*.nii.gz
+rapidtide/data/examples/databundle/*.txt
+rapidtide/data/examples/databundle/*.par
+rapidtide/data/examples/databundle/*.dat
+rapidtide/data/examples/databundle/*.jpg
+rapidtide/data/examples/databundle/*.jpeg
+rapidtide/data/examples/databundle/*.png
+rapidtide/data/examples/databundle/*.tsv.gz
+rapidtide/data/examples/databundle/*.tsv
 
 # some local test data
 rapidtide/data/examples/src/*.jpg

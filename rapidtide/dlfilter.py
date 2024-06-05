@@ -48,6 +48,7 @@ mpl.use("Agg")
 
 tfversion = -1
 try:
+    print("Trying to import plaidml.keras")
     import plaidml.keras
 
     plaidml.keras.install_backend("plaidml")
@@ -74,6 +75,8 @@ try:
 except ImportError:
     tfversion = -1
     LGR.warning("import plaidml.keras failed: falling back to standard tensorflow keras")
+
+print("tfversion = " + str(tfversion))
 
 if tfversion == -1:
     try:

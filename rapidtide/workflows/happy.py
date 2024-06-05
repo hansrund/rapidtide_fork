@@ -196,7 +196,14 @@ def happy_main(argparsingfunc):
     # make and save a mask of the voxels to process based on image intensity
     tide_util.logmem("before mask creation")
     # mask = np.uint16(masking.compute_epi_mask(nim).dataobj.reshape(numspatiallocs))
-    mask = np.uint16(tide_mask.makeepimask(nim).dataobj.reshape(numspatiallocs))
+    ########################################################################################################
+    ### DEBUG ##############################################################################################
+    ########################################################################################################
+    opening = 2
+    excludeZeros = True
+    ########################################################################################################
+    # Set opening to 0, otherwise the entire mask is eroded away for single slice and zero mask error
+    mask = np.uint16(tide_mask.makeepimask(nim, opening, excludeZeros).dataobj.reshape(numspatiallocs))
     validvoxels = np.where(mask > 0)[0]
     theheader = copy.deepcopy(nim_hdr)
     theheader["dim"][4] = 1
@@ -385,6 +392,7 @@ def happy_main(argparsingfunc):
         slicetimeaxis = np.linspace(
             0.0, tr * timepoints, num=(timepoints * numsteps), endpoint=False
         )
+        # Upsampling of fMRI data
         if (thispass == 0) and args.doupsampling:
             # allocate the upsampled image
             upsampleimage = np.zeros((xsize, ysize, numslices, numsteps * timepoints), dtype=float)
@@ -986,7 +994,7 @@ def happy_main(argparsingfunc):
         # now calculate the phase waveform
         tide_util.logmem("before analytic phase analysis")
         instantaneous_cardiacphase, amplitude_envelope, analytic_signal = tide_fit.phaseanalysis(
-            filthiresfund
+            filthiresfund, displayplots=True
         )
         if args.outputlevel > 0:
             if thispass == numpasses - 1:

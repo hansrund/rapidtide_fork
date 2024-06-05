@@ -33,8 +33,9 @@ def resampmask(themask, thetargetres):
     return themask
 
 
-def makeepimask(nim):
-    return masking.compute_epi_mask(nim)
+def makeepimask(nim, opening=2, excludeZeros=False):
+    epi_mask = masking.compute_epi_mask(nim, opening=opening, exclude_zeros=excludeZeros)
+    return epi_mask
 
 
 def maketmask(filename, timeaxis, maskvector, debug=False):

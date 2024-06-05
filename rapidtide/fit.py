@@ -2211,7 +2211,7 @@ def phaseanalysis(firstharmonic, displayplots=False):
         ax3.set_title("Amplitude")
         plt.plot(X, amplitude_envelope, "b")
         plt.show()
-        plt.savefig("phaseanalysistest.jpg")
+        plt.savefig("/home/$USER/phaseanalysistest.jpg")
     instantaneous_phase = np.unwrap(instantaneous_phase)
     return instantaneous_phase, amplitude_envelope, analytic_signal
 
