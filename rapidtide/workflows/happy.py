@@ -957,7 +957,7 @@ def happy_main(argparsingfunc):
                     debug=args.debug,
                 )
 
-        #  extract the fundamental
+        # extract the fundamental
         if args.forcedhr is not None:
             peakfreq = args.forcedhr
             infodict["forcedhr"] = peakfreq

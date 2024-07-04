@@ -57,6 +57,7 @@ mpl.use("Agg")
 
 tfversion = -1
 try:
+    # This really only makes sense if you don't have an nvidia GPU, otherwise default to tensorflow / keras below
     print("Trying to import plaidml.keras")
     import plaidml.keras
 
@@ -102,25 +103,32 @@ if tfversion == -1:
         raise ImportError("no backend found - exiting")
 
 if tfversion == 2:
-    LGR.debug("using tensorflow v2x")
-    tf.disable_v2_behavior()
-    from tensorflow.keras.callbacks import ModelCheckpoint, TerminateOnNaN
-    from tensorflow.keras.layers import (
-        LSTM,
-        Activation,
-        BatchNormalization,
-        Bidirectional,
-        Convolution1D,
-        Dense,
-        Dropout,
-        GlobalMaxPool1D,
-        MaxPooling1D,
-        TimeDistributed,
-        UpSampling1D,
-    )
-    from tensorflow.keras.models import Sequential, load_model
-    from tensorflow.keras.optimizers import RMSprop
+    try:
+        keras = tf.keras
+        LGR.debug("using tensorflow v2x")
+        tf.disable_v2_behavior()
+        # ADDED .python in the path here for all of then and suddenly the import is resolved in vscode
+        from tensorflow.python.keras.callbacks import ModelCheckpoint, TerminateOnNaN
+        from keras.layers import (
+            LSTM,
+            Activation,
+            BatchNormalization,
+            Bidirectional,
+            Convolution1D,
+            Dense,
+            Dropout,
+            GlobalMaxPool1D,
+            MaxPooling1D,
+            TimeDistributed,
+            UpSampling1D,
+        )
+        from keras.models import Sequential, load_model
+        from keras.optimizers import RMSprop
+    except Exception as e:
+        print(e)
+        raise Exception("Importing tensorflow components failed.")
 
+    print(f"tensorflow version: >>>{tf.__version__}<<<")
     LGR.debug(f"tensorflow version: >>>{tf.__version__}<<<")
 elif tfversion == 1:
     LGR.debug("using tensorflow v1x")
