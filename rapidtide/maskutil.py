@@ -34,7 +34,8 @@ def resampmask(themask, thetargetres):
 
 
 def makeepimask(nim, opening=2, excludeZeros=False):
-    epi_mask = masking.compute_epi_mask(nim, opening=opening, exclude_zeros=excludeZeros)
+    # epi_mask = masking.compute_epi_mask(nim, opening=opening, exclude_zeros=excludeZeros)
+    epi_mask = masking.compute_epi_mask(nim)
     return epi_mask
 
 

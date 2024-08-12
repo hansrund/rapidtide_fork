@@ -99,22 +99,39 @@ if tfversion == -1:
         else:
             LGR.warning(f"could not interpret {tf.__version__[0]}")
         LGR.debug(f"tensorflow version is {tfversion}")
-    except ImportError:
-        raise ImportError("no backend found - exiting")
+    except Exception as e:
+        print(e)
+        raise Exception("no backend found - exiting")
 
 if tfversion == 2:
     try:
         keras = tf.keras
+        # import keras
+        # import tensorflow.compat.v1.keras as keras
         LGR.debug("using tensorflow v2x")
         tf.disable_v2_behavior()
         # ADDED .python in the path here for all of then and suddenly the import is resolved in vscode
         from tensorflow.python.keras.callbacks import ModelCheckpoint, TerminateOnNaN
+        # from keras.callbacks import ModelCheckpoint, TerminateOnNaN
+        from tensorflow.python.keras.layers import (
+            # LSTM,
+            # Activation,
+            # BatchNormalization,
+            # Bidirectional,
+            Convolution1D,
+            # Dense,
+            # Dropout,
+            # GlobalMaxPool1D,
+            # MaxPooling1D,
+            # TimeDistributed,
+            # UpSampling1D,
+        )
         from keras.layers import (
             LSTM,
             Activation,
             BatchNormalization,
             Bidirectional,
-            Convolution1D,
+            # Convolution1D,
             Dense,
             Dropout,
             GlobalMaxPool1D,
@@ -122,7 +139,8 @@ if tfversion == 2:
             TimeDistributed,
             UpSampling1D,
         )
-        from keras.models import Sequential, load_model
+        from tensorflow.python.keras.models import Sequential, load_model
+        # from tensorflow.python.keras.optimizers import RMSprop
         from keras.optimizers import RMSprop
     except Exception as e:
         print(e)

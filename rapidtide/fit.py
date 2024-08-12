@@ -1794,21 +1794,48 @@ def phaseanalysis(firstharmonic, displayplots=False):
     instantaneous_phase = np.angle(analytic_signal)
     if displayplots:
         print("making plots")
-        fig = plt.figure()
-        ax1 = fig.add_subplot(311)
-        ax1.set_title("Analytic signal")
+        fig, (ax1, ax2, ax3) = plt.subplots(3,1)
+        # ax1 = fig.add_subplot(311)
         X = np.linspace(0.0, 1.0, num=len(firstharmonic))
-        plt.plot(X, analytic_signal.real, "k", X, analytic_signal.imag, "r")
-        ax2 = fig.add_subplot(312)
+        ax1.set_title("Analytic signal")
+        ax1.plot(X, analytic_signal.real, "k", X, analytic_signal.imag, "r")
+        # ax2 = fig.add_subplot(312)
         ax2.set_title("Phase")
-        plt.plot(X, instantaneous_phase, "g")
-        ax3 = fig.add_subplot(313)
+        ax2.plot(X, instantaneous_phase, "g")
+        # ax3 = fig.add_subplot(313)
         ax3.set_title("Amplitude")
-        plt.plot(X, amplitude_envelope, "b")
-        plt.show()
-        plt.savefig("/home/hcrund/phaseanalysistest.jpg")
+        ax3.plot(X, amplitude_envelope, "b")
+
+        plt.show(block=True)
+        fig.savefig("/home/hcrund/phaseanalysistest.jpg")
+    
     instantaneous_phase = np.unwrap(instantaneous_phase)
     return instantaneous_phase, amplitude_envelope, analytic_signal
+
+def phaseanalysis_extended(firstharmonic, displayplots=False):
+    print("entering phaseanalysis")
+    analytic_signal = hilbert(firstharmonic)
+    amplitude_envelope = np.abs(analytic_signal)
+    instantaneous_phase_wrapped = np.angle(analytic_signal)
+    if displayplots:
+        print("making plots")
+        fig, (ax1, ax2, ax3) = plt.subplots(3,1)
+        # ax1 = fig.add_subplot(311)
+        X = np.linspace(0.0, 1.0, num=len(firstharmonic))
+        ax1.set_title("Analytic signal")
+        ax1.plot(X, analytic_signal.real, "k", X, analytic_signal.imag, "r")
+        # ax2 = fig.add_subplot(312)
+        ax2.set_title("Phase")
+        ax2.plot(X, instantaneous_phase_wrapped, "g")
+        # ax3 = fig.add_subplot(313)
+        ax3.set_title("Amplitude")
+        ax3.plot(X, amplitude_envelope, "b")
+
+        plt.show(block=True)
+        fig.savefig("/home/hcrund/phaseanalysistest.jpg")
+    
+    instantaneous_phase_unwrapped = np.unwrap(instantaneous_phase_wrapped)
+    return instantaneous_phase_unwrapped, instantaneous_phase_wrapped, amplitude_envelope, analytic_signal
 
 
 FML_NOERROR = np.uint32(0x0000)

@@ -40,6 +40,8 @@ import rapidtide.util as tide_util
 
 from .utils import setup_logger
 
+from nilearn import masking
+
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 try:
@@ -194,7 +196,6 @@ def happy_main(argparsingfunc):
 
     # make and save a mask of the voxels to process based on image intensity
     tide_util.logmem("before mask creation")
-    # mask = np.uint16(masking.compute_epi_mask(nim).dataobj.reshape(numspatiallocs))
     ########################################################################################################
     ### DEBUG ##############################################################################################
     ########################################################################################################
@@ -202,7 +203,18 @@ def happy_main(argparsingfunc):
     excludeZeros = True
     ########################################################################################################
     # Set opening to 0, otherwise the entire mask is eroded away for single slice and zero mask error
-    mask = np.uint16(tide_mask.makeepimask(nim, opening, excludeZeros).dataobj.reshape(numspatiallocs))
+    # Directly use nilearn masking util
+    mask = np.uint16(
+        masking.compute_epi_mask(nim, \
+                                 lower_cutoff=0.5, \
+                                 upper_cutoff=0.85, \
+                                 connected=True, \
+                                 opening=1 \
+                                ).dataobj.reshape(numspatiallocs))
+    
+    # mask = np.uint16(tide_mask.makeepimask(nim, opening, excludeZeros).dataobj.reshape(numspatiallocs))
+    # mask = np.uint16(tide_mask.makeepimask(nim).dataobj.reshape(numspatiallocs))
+    
     validvoxels = np.where(mask > 0)[0]
     theheader = copy.deepcopy(nim_hdr)
     theheader["dim"][4] = 1
@@ -321,6 +333,7 @@ def happy_main(argparsingfunc):
         estmask_byslice = estmask.reshape(xsize * ysize, numslices)
         print("using estmask from file", args.estmaskname)
         numpasses = 1
+        # numpasses = 2
     else:
         # just fall back to the intensity mask
         estmask_byslice = mask_byslice.astype("float64")
@@ -537,7 +550,7 @@ def happy_main(argparsingfunc):
                 outputroot + "_desc-stdrescardfromfmri_timeseries",
                 normcardfromfmri_stdres,
                 args.stdfreq,
-                columns=["normcardiac_" + str(args.stdfreq) + "Hz"],
+                columns=["normcardiacfromfmri_" + str(args.stdfreq) + "Hz"],
                 append=True,
                 debug=args.debug,
             )
@@ -992,9 +1005,25 @@ def happy_main(argparsingfunc):
 
         # now calculate the phase waveform
         tide_util.logmem("before analytic phase analysis")
-        instantaneous_cardiacphase, amplitude_envelope, analytic_signal = tide_fit.phaseanalysis(
-            filthiresfund, displayplots=True
+        instantaneous_cardiacphase, instantaneous_cardiacphase_wrapped, amplitude_envelope, analytic_signal = tide_fit.phaseanalysis_extended(
+            filthiresfund, displayplots=False
         )
+        # Resample instant phase to std resolution to compare it to ppu signal
+
+        instantaneous_cardiacphase_stdres2 = tide_resample.upsample(
+            instantaneous_cardiacphase, 
+            slicesamplerate, 
+            args.stdfreq, 
+            method="univariate", 
+            debug=args.debug)
+        # instantaneous_cardiacphase_stdres = \
+        #     tide_resample.arbresample(
+        #         instantaneous_cardiacphase,
+        #         slicesamplerate,
+        #         args.stdfreq,
+        #         decimate=True,
+        #         debug=False,
+        #     )
         if args.outputlevel > 0:
             if thispass == numpasses - 1:
                 tide_io.writebidstsv(
@@ -1021,12 +1050,63 @@ def happy_main(argparsingfunc):
                     append=True,
                     debug=args.debug,
                 )
+                tide_io.writebidstsv(
+                    outputroot + "_desc-slicerescardfromfmri_timeseries",
+                    instantaneous_cardiacphase_wrapped,
+                    slicesamplerate,
+                    columns=["instphase_wrapped"],
+                    append=True,
+                    debug=args.debug,
+                )
+                # tide_io.writebidstsv(
+                #     outputroot + "_desc-stdrescardfromfmri_timeseries",
+                #     instantaneous_cardiacphase_stdres,
+                #     args.stdfreq,
+                #     columns=["instphase_unwrapped_"+ str(args.stdfreq) + "Hz"],
+                #     append=True,
+                # )
+                # tide_io.writebidstsv(
+                #     outputroot + "_desc-stdrescardfromfmri_timeseries",
+                #     ((instantaneous_cardiacphase_stdres+np.pi)%(2*np.pi)-np.pi),
+                #     args.stdfreq,
+                #     columns=["instphase_wrapped_"+ str(args.stdfreq) + "Hz"],
+                #     append=True,
+                # )
+                tide_io.writebidstsv(
+                    outputroot + "_desc-stdrescardfromfmri_timeseries",
+                    instantaneous_cardiacphase_stdres2,
+                    args.stdfreq,
+                    columns=["instphase_unwrapped_"+ str(args.stdfreq) + "Hz"],
+                    append=True,
+                )
+                tide_io.writebidstsv(
+                    outputroot + "_desc-stdrescardfromfmri_timeseries",
+                    ((instantaneous_cardiacphase_stdres2+np.pi)%(2*np.pi)-np.pi),
+                    args.stdfreq,
+                    columns=["instphase_wrapped_"+ str(args.stdfreq) + "Hz"],
+                    append=True,
+                )
 
         if args.filtphase:
             print("Filtering phase waveform")
             instantaneous_cardiacphase = tide_math.trendfilt(
                 instantaneous_cardiacphase, debug=False
             )
+            # instantaneous_cardiacphase_stdres = \
+            #     tide_resample.arbresample(
+            #         instantaneous_cardiacphase,
+            #         slicesamplerate,
+            #         args.stdfreq,
+            #         decimate=True,
+            #         debug=False,
+            #     )
+            instantaneous_cardiacphase_stdres2 = tide_resample.upsample(
+                instantaneous_cardiacphase, 
+                slicesamplerate, 
+                args.stdfreq, 
+                method="univariate", 
+                debug=args.debug)
+            
             if args.outputlevel > 1:
                 if thispass == numpasses - 1:
                     tide_io.writebidstsv(
@@ -1034,6 +1114,46 @@ def happy_main(argparsingfunc):
                         instantaneous_cardiacphase,
                         slicesamplerate,
                         columns=["filtered_instphase_unwrapped"],
+                        append=True,
+                        debug=args.debug,
+                    )
+                    tide_io.writebidstsv(
+                        outputroot + "_desc-slicerescardfromfmri_timeseries",
+                        (instantaneous_cardiacphase+np.pi)%(2*np.pi)-np.pi,
+                        slicesamplerate,
+                        columns=["filtered_instphase_wrapped"],
+                        append=True,
+                        debug=args.debug,
+                    )
+                    # tide_io.writebidstsv(
+                    #     outputroot + "_desc-stdrescardfromfmri_timeseries",
+                    #     instantaneous_cardiacphase_stdres,
+                    #     args.stdfreq,
+                    #     columns=["filtered_instphase_unwrapped_"+ str(args.stdfreq) + "Hz"],
+                    #     append=True,
+                    #     debug=args.debug,
+                    # )
+                    # tide_io.writebidstsv(
+                    #     outputroot + "_desc-stdrescardfromfmri_timeseries",
+                    #     ((instantaneous_cardiacphase_stdres+np.pi)%(2*np.pi)-np.pi),
+                    #     args.stdfreq,
+                    #     columns=["filtered_instphase_wrapped_"+ str(args.stdfreq) + "Hz"],
+                    #     append=True,
+                    #     debug=args.debug,
+                    # )
+                    tide_io.writebidstsv(
+                        outputroot + "_desc-stdrescardfromfmri_timeseries",
+                        instantaneous_cardiacphase_stdres2,
+                        args.stdfreq,
+                        columns=["filtered_instphase_unwrapped_"+ str(args.stdfreq) + "Hz"],
+                        append=True,
+                        debug=args.debug,
+                    )
+                    tide_io.writebidstsv(
+                        outputroot + "_desc-stdrescardfromfmri_timeseries",
+                        ((instantaneous_cardiacphase_stdres2+np.pi)%(2*np.pi)-np.pi),
+                        args.stdfreq,
+                        columns=["filtered_instphase_wrapped_"+ str(args.stdfreq) + "Hz"],
                         append=True,
                         debug=args.debug,
                     )
