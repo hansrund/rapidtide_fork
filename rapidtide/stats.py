@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -16,108 +16,77 @@
 #   limitations under the License.
 #
 #
-import warnings
+
+from typing import Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    try:
-        import pyfftw
-    except ImportError:
-        pyfftwpresent = False
-    else:
-        pyfftwpresent = True
-
+import pyfftw
 import scipy as sp
+from numpy.typing import ArrayLike, NDArray
 from scipy.stats import johnsonsb, kurtosis, kurtosistest, skew, skewtest
+from statsmodels.robust import mad
 
 import rapidtide.fit as tide_fit
 import rapidtide.io as tide_io
 
-if pyfftwpresent:
-    fftpack = pyfftw.interfaces.scipy_fftpack
-    pyfftw.interfaces.cache.enable()
+# Use pyfftw as the backend for all scipy.fft operations
+sp.fft.set_backend(pyfftw.interfaces.scipy_fft)
+pyfftw.interfaces.cache.enable()
 
 
 # ---------------------------------------- Global constants -------------------------------------------
 defaultbutterorder = 6
 MAXLINES = 10000000
-donotbeaggressive = True
-
-# ----------------------------------------- Conditional imports ---------------------------------------
-try:
-    from memory_profiler import profile
-
-    memprofilerexists = True
-except ImportError:
-    memprofilerexists = False
-
-try:
-    from numba import jit
-except ImportError:
-    donotusenumba = True
-else:
-    donotusenumba = False
-
-
-def disablenumba():
-    global donotusenumba
-    donotusenumba = True
-
-
-def conditionaljit():
-    def resdec(f):
-        if donotusenumba:
-            return f
-        return jit(f, nopython=True)
-
-    return resdec
-
-
-def conditionaljit2():
-    def resdec(f):
-        if donotusenumba or donotbeaggressive:
-            return f
-        return jit(f, nopython=True)
-
-    return resdec
 
 
 # --------------------------- probability functions -------------------------------------------------
-def printthresholds(pcts, thepercentiles, labeltext):
-    """
+def printthresholds(pcts: ArrayLike, thepercentiles: ArrayLike, labeltext: str) -> None:
+    """Print significance thresholds with formatted output.
 
     Parameters
     ----------
-    pcts
-    thepercentiles
-    labeltext
-
-    Returns
-    -------
-
+    pcts : array-like
+        Percentile threshold values
+    thepercentiles : array-like
+        Percentile levels (0-1)
+    labeltext : str
+        Label to print before thresholds
     """
     print(labeltext)
     for i in range(0, len(pcts)):
         print(f"\tp <{1.0 - thepercentiles[i]:.3f}: {pcts[i]:.3f}")
 
 
-def fitgausspdf(thehist, histlen, thedata, displayplots=False, nozero=False, debug=False):
-    """
+def fitgausspdf(
+    thehist: Tuple,
+    histlen: int,
+    thedata: NDArray,
+    displayplots: bool = False,
+    nozero: bool = False,
+    debug: bool = False,
+) -> NDArray:
+    """Fit a Gaussian probability density function to histogram data.
 
     Parameters
     ----------
-    thehist
-    histlen
-    thedata
-    displayplots
-    nozero
+    thehist : tuple
+        Histogram tuple from np.histogram containing (counts, bin_edges)
+    histlen : int
+        Length of histogram
+    thedata : array-like
+        Original data used to create histogram
+    displayplots : bool, optional
+        If True, display fit visualization. Default: False
+    nozero : bool, optional
+        If True, ignore zero values. Default: False
+    debug : bool, optional
+        Enable debug output. Default: False
 
     Returns
     -------
-
+    array-like
+        Array containing (peakheight, peakloc, peakwidth, zeroterm)
     """
     thestore = np.zeros((2, histlen), dtype="float64")
     thestore[0, :] = thehist[1][:-1]
@@ -177,20 +146,35 @@ def fitgausspdf(thehist, histlen, thedata, displayplots=False, nozero=False, deb
     return np.append(params, np.array([zeroterm]))
 
 
-def fitjsbpdf(thehist, histlen, thedata, displayplots=False, nozero=False, debug=False):
-    """
+def fitjsbpdf(
+    thehist: Tuple,
+    histlen: int,
+    thedata: NDArray,
+    displayplots: bool = False,
+    nozero: bool = False,
+    debug: bool = False,
+) -> NDArray:
+    """Fit a Johnson SB probability density function to histogram data.
 
     Parameters
     ----------
-    thehist
-    histlen
-    thedata
-    displayplots
-    nozero
+    thehist : tuple
+        Histogram tuple from np.histogram containing (counts, bin_edges)
+    histlen : int
+        Length of histogram
+    thedata : array-like
+        Original data used to create histogram
+    displayplots : bool, optional
+        If True, display fit visualization. Default: False
+    nozero : bool, optional
+        If True, ignore zero values. Default: False
+    debug : bool, optional
+        Enable debug output. Default: False
 
     Returns
     -------
-
+    array-like
+        Array containing (a, b, loc, scale, zeroterm) parameters of Johnson SB fit
     """
     thestore = np.zeros((2, histlen), dtype="float64")
     thestore[0, :] = thehist[1][:-1]
@@ -229,54 +213,70 @@ def fitjsbpdf(thehist, histlen, thedata, displayplots=False, nozero=False, debug
     return np.append(params, np.array([zeroterm]))
 
 
-def getjohnsonppf(percentile, params, zeroterm):
-    """
+def getjohnsonppf(percentile: float, params: ArrayLike, zeroterm: float) -> None:
+    """Get percent point function (inverse CDF) for Johnson SB distribution.
+
+    Note: This function is incomplete and only initializes variables.
 
     Parameters
     ----------
-    percentile
-    params
-    zeroterm
-
-    Returns
-    -------
-
+    percentile : float
+        Percentile value (0-1)
+    params : array-like
+        Johnson SB distribution parameters (a, b, loc, scale)
+    zeroterm : float
+        Zero term correction factor
     """
     johnsonfunc = johnsonsb(params[0], params[1], params[2], params[3])
     corrfac = 1.0 - zeroterm
 
 
 def sigFromDistributionData(
-    vallist,
-    histlen,
-    thepercentiles,
-    similaritymetric="correlation",
-    displayplots=False,
-    twotail=False,
-    nozero=False,
-    dosighistfit=True,
-    debug=False,
-):
-    """
+    vallist: NDArray,
+    histlen: int,
+    thepercentiles: ArrayLike,
+    similaritymetric: str = "correlation",
+    displayplots: bool = False,
+    twotail: bool = False,
+    nozero: bool = False,
+    dosighistfit: bool = True,
+    debug: bool = False,
+) -> Tuple[Optional[list], Optional[list], Optional[NDArray]]:
+    """Calculate significance thresholds from distribution data.
+
+    Fits a probability distribution to data and calculates percentile thresholds
+    for significance testing.
 
     Parameters
     ----------
-    vallist
-    histlen
-    thepercentiles
-    displayplots
-    twotail
-    nozero
-    dosighistfit
+    vallist : array-like
+        List of similarity/correlation values
+    histlen : int
+        Length of histogram
+    thepercentiles : array-like
+        Percentile values to compute (0-1)
+    similaritymetric : str, optional
+        Type of similarity metric ("correlation" or "mutualinfo"). Default: "correlation"
+    displayplots : bool, optional
+        If True, display diagnostic plots. Default: False
+    twotail : bool, optional
+        If True, calculate two-tailed thresholds. Default: False
+    nozero : bool, optional
+        If True, exclude zero values. Default: False
+    dosighistfit : bool, optional
+        If True, fit distribution to data. Default: True
+    debug : bool, optional
+        Enable debug output. Default: False
 
     Returns
     -------
-
+    tuple
+        (pcts_data, pcts_fit, histfit) - percentiles from data, fitted distribution, and fit parameters
     """
     # check to make sure there are nonzero values first
     if len(np.where(vallist != 0.0)[0]) == 0:
         print("no nonzero values - skipping percentile calculation")
-        return None, 0, 0
+        return None, None, None
     thehistogram, peakheight, peakloc, peakwidth, centerofmass, peakpercentile = makehistogram(
         np.abs(vallist), histlen, therange=[0.0, 1.0]
     )
@@ -307,40 +307,122 @@ def sigFromDistributionData(
         pcts_fit = getfracvalsfromfit(histfit, thepercentiles)
         return pcts_data, pcts_fit, histfit
     else:
-        return pcts_data, 0, 0
+        pcts_fit = []
+        for i in len(pcts_data):
+            pcts_fit.append(None)
+        return pcts_data, pcts_fit, None
 
 
-def rfromp(fitfile, thepercentiles):
-    """
+global neglogpfromr_interpolator, minrforneglogp, maxrforneglogp
+neglogpfromr_interpolator = None
+minrforneglogp = None
+maxrforneglogp = None
+
+
+def neglog10pfromr(
+    rval: float,
+    histfit: ArrayLike,
+    lutlen: int = 3000,
+    initialize: bool = False,
+    neglogpmin: float = 0.0,
+    neglogpmax: float = 3.0,
+    debug: bool = False,
+) -> float:
+    """Convert correlation value to negative log10 p-value using histogram fit.
 
     Parameters
     ----------
-    fitfile
-    thepercentiles
+    rval : float
+        Correlation value to convert
+    histfit : array-like
+        Histogram fit parameters from fitjsbpdf
+    lutlen : int, optional
+        Length of lookup table. Default: 3000
+    initialize : bool, optional
+        Force reinitialization of interpolator. Default: False
+    neglogpmin : float, optional
+        Minimum negative log10 p-value. Default: 0.0
+    neglogpmax : float, optional
+        Maximum negative log10 p-value. Default: 3.0
+    debug : bool, optional
+        Enable debug output. Default: False
 
     Returns
     -------
+    float
+        Negative log10 p-value corresponding to the input correlation value
+    """
+    global neglogpfromr_interpolator, minrforneglogp, maxrforneglogp
+    if neglogpfromr_interpolator is None or initialize:
+        neglogparray = np.linspace(neglogpmin, neglogpmax, lutlen, endpoint=True)
+        pvals = pow(10.0, -neglogparray)
+        percentile_list = (1.0 - pvals).tolist()
+        rforneglogp = np.asarray(getfracvalsfromfit(histfit, percentile_list), dtype=float)
+        minrforneglogp = rforneglogp[0]
+        maxrforneglogp = rforneglogp[-1]
+        if debug:
+            print("START NEGLOGPFROMR DEBUG")
+            print("neglogp\tpval\tpct\trfornlp")
+            for i in range(lutlen):
+                print(f"{neglogparray[i]}\t{pvals[i]}\t{percentile_list[i]}\t{rforneglogp[i]}")
+            print("END NEGLOGPFROMR DEBUG")
+        neglogpfromr_interpolator = sp.interpolate.UnivariateSpline(
+            rforneglogp, neglogparray, k=3, s=0
+        )
+    if rval > maxrforneglogp:
+        return np.float64(neglogpmax)
+    elif rval < minrforneglogp:
+        return np.float64(neglogpmin)
+    else:
+        return np.float64(neglogpfromr_interpolator(np.asarray([rval], dtype=float))[0])
 
+
+def rfromp(fitfile: str, thepercentiles: ArrayLike) -> NDArray:
+    """Get correlation values from p-values using a saved distribution fit.
+
+    Parameters
+    ----------
+    fitfile : str
+        Path to file containing distribution fit parameters
+    thepercentiles : array-like
+        Percentile values to calculate (0-1)
+
+    Returns
+    -------
+    array-like
+        Correlation values corresponding to the percentiles
     """
     thefit = np.array(tide_io.readvecs(fitfile)[0]).astype("float64")
     print(f"thefit = {thefit}")
     return getfracvalsfromfit(thefit, thepercentiles)
 
 
-def tfromr(r, nsamps, dfcorrfac=1.0, oversampfactor=1.0, returnp=False):
-    """
+def tfromr(
+    r: float,
+    nsamps: int,
+    dfcorrfac: float = 1.0,
+    oversampfactor: float = 1.0,
+    returnp: bool = False,
+) -> Union[float, Tuple[float, float]]:
+    """Convert correlation to t-statistic.
 
     Parameters
     ----------
-    r
-    nsamps
-    dfcorrfac
-    oversampfactor
-    returnp
+    r : float
+        Correlation coefficient
+    nsamps : int
+        Number of samples
+    dfcorrfac : float, optional
+        Degrees of freedom correction factor. Default: 1.0
+    oversampfactor : float, optional
+        Oversampling factor for DOF adjustment. Default: 1.0
+    returnp : bool, optional
+        If True, also return p-value. Default: False
 
     Returns
     -------
-
+    float or tuple
+        T-statistic, or (t-statistic, p-value) if returnp=True
     """
     if r >= 1.0:
         tval = float("inf")
@@ -355,7 +437,21 @@ def tfromr(r, nsamps, dfcorrfac=1.0, oversampfactor=1.0, returnp=False):
         return tval
 
 
-def pfromz(z, twotailed=True):
+def pfromz(z: float, twotailed: bool = True) -> float:
+    """Calculate p-value from z-score.
+
+    Parameters
+    ----------
+    z : float
+        Z-score value
+    twotailed : bool, optional
+        If True, calculate two-tailed p-value. Default: True
+
+    Returns
+    -------
+    float
+        P-value corresponding to the z-score
+    """
     # importing packages
     import scipy.stats
 
@@ -366,20 +462,32 @@ def pfromz(z, twotailed=True):
         return scipy.stats.norm.sf(abs(z))
 
 
-def zfromr(r, nsamps, dfcorrfac=1.0, oversampfactor=1.0, returnp=False):
-    """
+def zfromr(
+    r: float,
+    nsamps: int,
+    dfcorrfac: float = 1.0,
+    oversampfactor: float = 1.0,
+    returnp: bool = False,
+) -> Union[float, Tuple[float, float]]:
+    """Convert correlation to z-statistic.
 
     Parameters
     ----------
-    r
-    nsamps
-    dfcorrfac
-    oversampfactor
-    returnp
+    r : float
+        Correlation coefficient
+    nsamps : int
+        Number of samples
+    dfcorrfac : float, optional
+        Degrees of freedom correction factor. Default: 1.0
+    oversampfactor : float, optional
+        Oversampling factor for DOF adjustment. Default: 1.0
+    returnp : bool, optional
+        If True, also return p-value. Default: False
 
     Returns
     -------
-
+    float or tuple
+        Z-statistic, or (z-statistic, p-value) if returnp=True
     """
     if r >= 1.0:
         zval = float("inf")
@@ -394,29 +502,79 @@ def zfromr(r, nsamps, dfcorrfac=1.0, oversampfactor=1.0, returnp=False):
         return zval
 
 
-def zofcorrdiff(r1, r2, n1, n2):
-    return (fisher(r1) - fisher(r2)) / stderrofdiff(n1, n2)
-
-
-def stderrofdiff(n1, n2):
-    return np.sqrt(1.0 / (n1 - 3) + 1.0 / (n2 - 3))
-
-
-def fisher(r):
-    """
+def zofcorrdiff(r1: float, r2: float, n1: int, n2: int) -> float:
+    """Calculate z-statistic for the difference between two correlations.
 
     Parameters
     ----------
-    r
+    r1 : float
+        First correlation coefficient
+    r2 : float
+        Second correlation coefficient
+    n1 : int
+        Sample size for first correlation
+    n2 : int
+        Sample size for second correlation
 
     Returns
     -------
+    float
+        Z-statistic for the difference between the two correlations
+    """
+    return (fisher(r1) - fisher(r2)) / stderrofdiff(n1, n2)
 
+
+def stderrofdiff(n1: int, n2: int) -> float:
+    """Calculate standard error of difference between two Fisher-transformed correlations.
+
+    Parameters
+    ----------
+    n1 : int
+        Sample size for first correlation
+    n2 : int
+        Sample size for second correlation
+
+    Returns
+    -------
+    float
+        Standard error of the difference
+    """
+    return np.sqrt(1.0 / (n1 - 3) + 1.0 / (n2 - 3))
+
+
+def fisher(r: float) -> float:
+    """Apply Fisher's r-to-z transformation to correlation coefficient.
+
+    Parameters
+    ----------
+    r : float
+        Correlation coefficient
+
+    Returns
+    -------
+    float
+        Fisher-transformed z-value
     """
     return 0.5 * np.log((1 + r) / (1 - r))
 
 
-def permute_phase(time_series):
+def permute_phase(time_series: NDArray) -> NDArray:
+    """Generate phase-randomized surrogate time series.
+
+    Creates a surrogate time series with the same power spectrum as the input
+    but with randomized phases. Useful for generating null distributions in
+    time series analysis.
+
+    Parameters
+    ----------
+    time_series : array-like
+        Input time series
+
+    Returns
+    -------
+    array-like
+        Phase-randomized surrogate time series with same length as input
+    """
     # Compute the Fourier transform of the time series
     freq_domain = np.fft.rfft(time_series)
 
@@ -430,37 +588,71 @@ def permute_phase(time_series):
     return permuted_time_series
 
 
-def skewnessstats(timecourse):
-    """
+def skewnessstats(timecourse: NDArray) -> Tuple[float, float, float]:
+    """Calculate skewness and statistical test for timecourse.
 
     Parameters
     ----------
-    timecourse: array
-        The timecourse to test
+    timecourse : array-like
+        Input time series
 
-    :return:
-
+    Returns
+    -------
+    tuple
+        (skewness, z-statistic, p-value) from skewness test
     """
     testres = skewtest(timecourse)
     return skew(timecourse), testres[0], testres[1]
 
 
-def kurtosisstats(timecourse):
-    """
+def kurtosisstats(timecourse: NDArray) -> Tuple[float, float, float]:
+    """Calculate kurtosis and statistical test for timecourse.
 
     Parameters
     ----------
-    timecourse: array
-        The timecourse to test
+    timecourse : array-like
+        Input time series
 
-    :return:
-
+    Returns
+    -------
+    tuple
+        (kurtosis, z-statistic, p-value) from kurtosis test
     """
     testres = kurtosistest(timecourse)
     return kurtosis(timecourse), testres[0], testres[1]
 
 
-def fast_ICC_rep_anova(Y, nocache=False, debug=False):
+def fmristats(
+    fmridata: NDArray,
+) -> Tuple[NDArray, NDArray, NDArray, NDArray, NDArray, NDArray, NDArray, NDArray]:
+    """Calculate comprehensive statistics for fMRI data along time axis.
+
+    Parameters
+    ----------
+    fmridata : ndarray
+        2D array where rows are voxels and columns are timepoints
+
+    Returns
+    -------
+    tuple
+        (min, max, mean, std, median, mad, skew, kurtosis) - each as 1D array
+        with length equal to number of voxels, calculated along timepoints
+    """
+    return (
+        np.min(fmridata, axis=1),
+        np.max(fmridata, axis=1),
+        np.mean(fmridata, axis=1),
+        np.std(fmridata, axis=1),
+        np.median(fmridata, axis=1),
+        mad(fmridata, axis=1),
+        skew(fmridata, axis=1),
+        kurtosis(fmridata, axis=1),
+    )
+
+
+def fast_ICC_rep_anova(
+    Y: NDArray, nocache: bool = False, debug: bool = False
+) -> Tuple[float, float, float, float, int, int]:
     """
     the data Y are entered as a 'table' ie subjects are in rows and repeated
     measures in columns
@@ -547,26 +739,34 @@ def fast_ICC_rep_anova(Y, nocache=False, debug=False):
 
 # --------------------------- histogram functions -------------------------------------------------
 def gethistprops(
-    indata,
-    histlen,
-    refine=False,
-    therange=None,
-    pickleft=False,
-    peakthresh=0.33,
-):
-    """
+    indata: NDArray,
+    histlen: int,
+    refine: bool = False,
+    therange: Optional[Tuple[float, float]] = None,
+    pickleft: bool = False,
+    peakthresh: float = 0.33,
+) -> Tuple[float, float, float]:
+    """Extract histogram peak properties from data.
 
     Parameters
     ----------
-    indata
-    histlen
-    refine
-    therange
-    pickleftpeak
+    indata : array-like
+        Input data array
+    histlen : int
+        Number of histogram bins
+    refine : bool, optional
+        If True, refine peak estimates using Gaussian fit. Default: False
+    therange : tuple, optional
+        (min, max) range for histogram. If None, use data range. Default: None
+    pickleft : bool, optional
+        If True, pick leftmost peak above threshold. Default: False
+    peakthresh : float, optional
+        Threshold for peak detection (fraction of max). Default: 0.33
 
     Returns
     -------
-
+    tuple
+        (peakloc, peakheight, peakwidth) - peak location, height, and width
     """
     thestore = np.zeros((2, histlen), dtype="float64")
     if therange is None:
@@ -582,7 +782,7 @@ def gethistprops(
         i = 1
         started = False
         finished = False
-        while i < len(thestore[1, :] - 2) and not finished:
+        while i < len(thestore[1, :] - 3) and not finished:
             if thestore[1, i] > peakthresh * overallmax:
                 started = True
             if thestore[1, i] > thestore[1, peakindex]:
@@ -608,13 +808,35 @@ def gethistprops(
 
 
 def prochistogram(
-    thehist,
-    refine=False,
-    pickleft=False,
-    peakthresh=0.33,
-    ignorefirstpoint=False,
-    debug=False,
-):
+    thehist: Tuple,
+    refine: bool = False,
+    pickleft: bool = False,
+    peakthresh: float = 0.33,
+    ignorefirstpoint: bool = False,
+    debug: bool = False,
+) -> Tuple[float, float, float, float]:
+    """Process histogram data to extract peak properties.
+
+    Parameters
+    ----------
+    thehist : tuple
+        Histogram tuple from np.histogram containing (counts, bin_edges)
+    refine : bool, optional
+        If True, refine peak estimates using Gaussian fit. Default: False
+    pickleft : bool, optional
+        If True, pick leftmost peak above threshold. Default: False
+    peakthresh : float, optional
+        Threshold for peak detection (fraction of max). Default: 0.33
+    ignorefirstpoint : bool, optional
+        If True, ignore first histogram bin. Default: False
+    debug : bool, optional
+        Enable debug output. Default: False
+
+    Returns
+    -------
+    tuple
+        (peakheight, peakloc, peakwidth, centerofmass) - peak properties
+    """
     thestore = np.zeros((2, len(thehist[0])), dtype="float64")
     histlen = len(thehist[1])
     thestore[0, :] = (thehist[1][1:] + thehist[1][0:-1]) / 2.0
@@ -666,7 +888,23 @@ def prochistogram(
     return peakheight, peakloc, peakwidth, centerofmass
 
 
-def percentilefromloc(indata, peakloc, nozero=False):
+def percentilefromloc(indata: NDArray, peakloc: float, nozero: bool = False) -> float:
+    """Calculate the percentile corresponding to a given value location.
+
+    Parameters
+    ----------
+    indata : array-like
+        Input data array
+    peakloc : float
+        Value location to find percentile for
+    nozero : bool, optional
+        If True, exclude zero values from calculation. Default: False
+
+    Returns
+    -------
+    float
+        Percentile (0-100) corresponding to the given value location
+    """
     order = indata.argsort()
     orderedvalues = indata[order]
     if nozero:
@@ -677,31 +915,46 @@ def percentilefromloc(indata, peakloc, nozero=False):
 
 
 def makehistogram(
-    indata,
-    histlen,
-    binsize=None,
-    therange=None,
-    pickleft=False,
-    peakthresh=0.33,
-    refine=False,
-    normalize=False,
-    ignorefirstpoint=False,
-    debug=False,
-):
-    """
+    indata: NDArray,
+    histlen: Optional[int],
+    binsize: Optional[float] = None,
+    therange: Optional[Tuple[float, float]] = None,
+    pickleft: bool = False,
+    peakthresh: float = 0.33,
+    refine: bool = False,
+    normalize: bool = False,
+    ignorefirstpoint: bool = False,
+    debug: bool = False,
+) -> Tuple[Tuple, float, float, float, float, float]:
+    """Create histogram and extract peak properties from data.
 
     Parameters
     ----------
-    indata
-    histlen
-    binsize
-    therange
-    refine
-    normalize
+    indata : array-like
+        Input data array
+    histlen : int or None
+        Number of histogram bins. If None, binsize must be specified
+    binsize : float, optional
+        Bin size for histogram. If specified, overrides histlen. Default: None
+    therange : tuple, optional
+        (min, max) range for histogram. If None, use data range. Default: None
+    pickleft : bool, optional
+        If True, pick leftmost peak above threshold. Default: False
+    peakthresh : float, optional
+        Threshold for peak detection (fraction of max). Default: 0.33
+    refine : bool, optional
+        If True, refine peak estimates using Gaussian fit. Default: False
+    normalize : bool, optional
+        If True, normalize histogram to unit area. Default: False
+    ignorefirstpoint : bool, optional
+        If True, ignore first histogram bin. Default: False
+    debug : bool, optional
+        Enable debug output. Default: False
 
     Returns
     -------
-
+    tuple
+        (histogram, peakheight, peakloc, peakwidth, centerofmass, peakpercentile)
     """
     if therange is None:
         therange = [indata.min(), indata.max()]
@@ -731,7 +984,27 @@ def makehistogram(
     return thehist, peakheight, peakloc, peakwidth, centerofmass, peakpercentile
 
 
-def echoloc(indata, histlen, startoffset=5.0):
+def echoloc(indata: NDArray, histlen: int, startoffset: float = 5.0) -> Tuple[float, float]:
+    """Detect and analyze echo peak in histogram data.
+
+    Identifies a secondary (echo) peak in histogram data that occurs after
+    the primary peak, useful for analyzing echo patterns in imaging data.
+
+    Parameters
+    ----------
+    indata : array-like
+        Input data array
+    histlen : int
+        Number of histogram bins
+    startoffset : float, optional
+        Offset from primary peak to start echo search. Default: 5.0
+
+    Returns
+    -------
+    tuple
+        (echo_lag, echo_ratio) where echo_lag is the distance between primary
+        and echo peaks, and echo_ratio is the ratio of echo to primary peak areas
+    """
     thehist, peakheight, peakloc, peakwidth, centerofmass, peakpercentile = makehistogram(
         indata, histlen, refine=True
     )
@@ -760,43 +1033,56 @@ def echoloc(indata, histlen, startoffset=5.0):
 
 
 def makeandsavehistogram(
-    indata,
-    histlen,
-    endtrim,
-    outname,
-    binsize=None,
-    saveimfile=False,
-    displaytitle="histogram",
-    displayplots=False,
-    refine=False,
-    therange=None,
-    normalize=False,
-    dictvarname=None,
-    thedict=None,
-    append=False,
-    debug=False,
-):
-    """
+    indata: NDArray,
+    histlen: int,
+    endtrim: int,
+    outname: str,
+    binsize: Optional[float] = None,
+    saveimfile: bool = False,
+    displaytitle: str = "histogram",
+    displayplots: bool = False,
+    refine: bool = False,
+    therange: Optional[Tuple[float, float]] = None,
+    normalize: bool = False,
+    dictvarname: Optional[str] = None,
+    thedict: Optional[dict] = None,
+    append: bool = False,
+    debug: bool = False,
+) -> None:
+    """Create histogram, extract properties, and save results to file.
 
     Parameters
     ----------
-    indata
-    histlen
-    endtrim
-    outname
-    displaytitle
-    displayplots
-    refine
-    therange
-    normalize
-    dictvarname
-    thedict
-    append
-    debug
-
-    Returns
-    -------
-
+    indata : array-like
+        Input data array
+    histlen : int
+        Number of histogram bins
+    endtrim : int
+        Number of bins to trim from end when plotting
+    outname : str
+        Output file path (without extension)
+    binsize : float, optional
+        Bin size for histogram. If specified, overrides histlen. Default: None
+    saveimfile : bool, optional
+        Unused parameter. Default: False
+    displaytitle : str, optional
+        Title for display plots. Default: "histogram"
+    displayplots : bool, optional
+        If True, display histogram plot. Default: False
+    refine : bool, optional
+        If True, refine peak estimates using Gaussian fit. Default: False
+    therange : tuple, optional
+        (min, max) range for histogram. If None, use data range. Default: None
+    normalize : bool, optional
+        If True, normalize histogram to unit area. Default: False
+    dictvarname : str, optional
+        Variable name for dictionary storage. If None, use outname. Default: None
+    thedict : dict, optional
+        Dictionary to store results in. If None, write to file. Default: None
+    append : bool, optional
+        If True, append to existing file. Default: False
+    debug : bool, optional
+        Enable debug output. Default: False
     """
     thehist, peakheight, peakloc, peakwidth, centerofmass, peakpercentile = makehistogram(
         indata,
@@ -878,18 +1164,22 @@ def makeandsavehistogram(
         plt.show()
 
 
-def symmetrize(a, antisymmetric=False, zerodiagonal=False):
-    """
+def symmetrize(a: NDArray, antisymmetric: bool = False, zerodiagonal: bool = False) -> NDArray:
+    """Symmetrize a matrix.
 
     Parameters
     ----------
-    a
-    antisymmetric
-    zerodiagonal
+    a : ndarray
+        Input matrix
+    antisymmetric : bool, optional
+        If True, create antisymmetric matrix (a - a.T) / 2. Default: False
+    zerodiagonal : bool, optional
+        If True, set diagonal elements to zero. Default: False
 
     Returns
     -------
-
+    ndarray
+        Symmetrized matrix
     """
     if antisymmetric:
         intermediate = (a - a.T) / 2.0
@@ -901,19 +1191,24 @@ def symmetrize(a, antisymmetric=False, zerodiagonal=False):
         return intermediate
 
 
-def makepmask(rvals, pval, sighistfit, onesided=True):
-    """
+def makepmask(rvals: NDArray, pval: float, sighistfit: NDArray, onesided: bool = True) -> NDArray:
+    """Create significance mask from p-value threshold and distribution fit.
 
     Parameters
     ----------
-    rvals
-    pval
-    sighistfit
-    onesided
+    rvals : array-like
+        Array of correlation or similarity values
+    pval : float
+        P-value threshold (0-1)
+    sighistfit : array-like
+        Distribution fit parameters from fitjsbpdf
+    onesided : bool, optional
+        If True, use one-sided test. If False, use two-sided test. Default: True
 
     Returns
     -------
-
+    ndarray
+        Binary mask (int16) with 1 for significant values, 0 otherwise
     """
     if onesided:
         return np.where(
@@ -928,35 +1223,49 @@ def makepmask(rvals, pval, sighistfit, onesided=True):
 
 
 # Find the image intensity value which thefrac of the non-zero voxels in the image exceed
-def getfracval(datamat, thefrac, nozero=False):
-    """
+def getfracval(datamat: NDArray, thefrac: float, nozero: bool = False) -> float:
+    """Get data value at a specific fractional position in sorted data.
 
     Parameters
     ----------
-    datamat
-    thefrac
+    datamat : array-like
+        Input data array
+    thefrac : float
+        Fractional position (0-1) to find value at
+    nozero : bool, optional
+        If True, exclude zero values. Default: False
 
     Returns
     -------
-
+    float
+        Value at the specified fractional position
     """
     return getfracvals(datamat, [thefrac], nozero=nozero)[0]
 
 
-def getfracvals(datamat, thefracs, nozero=False, debug=False):
-    """
+def getfracvals(
+    datamat: NDArray, thefracs: ArrayLike, nozero: bool = False, debug: bool = False
+) -> list:
+    """Get data values at multiple fractional positions in sorted data.
+
+    Finds the intensity values that correspond to specified fractional positions
+    when data is sorted in ascending order. Useful for percentile calculations.
 
     Parameters
     ----------
-    datamat
-    thefracs
-    displayplots
-    nozero
-    debug
+    datamat : array-like
+        Input data array
+    thefracs : array-like
+        List of fractional positions (0-1) to find values at
+    nozero : bool, optional
+        If True, exclude zero values. Default: False
+    debug : bool, optional
+        Enable debug output. Default: False
 
     Returns
     -------
-
+    list
+        Values at the specified fractional positions
     """
     thevals = []
 
@@ -984,17 +1293,23 @@ def getfracvals(datamat, thefracs, nozero=False, debug=False):
     return thevals
 
 
-def getfracvalsfromfit(histfit, thefracs):
-    """
+def getfracvalsfromfit(histfit: ArrayLike, thefracs: ArrayLike) -> NDArray:
+    """Get data values at fractional positions from a Johnson SB distribution fit.
+
+    Uses the fitted Johnson SB distribution to calculate values corresponding
+    to specified percentiles.
 
     Parameters
     ----------
-    histfit
-    thefracs
+    histfit : array-like
+        Johnson SB distribution fit parameters (a, b, loc, scale, zeroterm) from fitjsbpdf
+    thefracs : array-like
+        List of fractional positions/percentiles (0-1) to calculate values for
 
     Returns
     -------
-
+    array-like
+        Values corresponding to the specified percentiles from the fitted distribution
     """
     # print('entering getfracvalsfromfit: histfit=',histfit, ' thefracs=', thefracs)
     thedist = johnsonsb(histfit[0], histfit[1], histfit[2], histfit[3])
@@ -1002,7 +1317,13 @@ def getfracvalsfromfit(histfit, thefracs):
     return thevals
 
 
-def makemask(image, threshpct=25.0, verbose=False, nozero=False, noneg=False):
+def makemask(
+    image: NDArray,
+    threshpct: float = 25.0,
+    verbose: bool = False,
+    nozero: bool = False,
+    noneg: bool = False,
+) -> NDArray:
     """
 
     Parameters
@@ -1036,13 +1357,13 @@ def makemask(image, threshpct=25.0, verbose=False, nozero=False, noneg=False):
         print(
             f"fracval: {pctthresh:.2f}",
             f"threshpct: {threshpct:.2f}",
-            f"mask threshhold: {threshval:.2f}",
+            f"mask threshold: {threshval:.2f}",
         )
     themask = np.where(image > threshval, np.int16(1), np.int16(0))
     return themask
 
 
-def getmasksize(themask):
+def getmasksize(themask: NDArray) -> int:
     """
 
     Parameters

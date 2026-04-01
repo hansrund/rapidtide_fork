@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import rapidtide.fit as tide_fit
-import rapidtide.helper_classes as tide_classes
 import rapidtide.io as tide_io
+import rapidtide.simFuncClasses as tide_classes
 from rapidtide.tests.utils import get_examples_path
 
 

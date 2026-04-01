@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ def test_doresample(debug=False):
     shiftdist = 30
     timeaxis = np.arange(0.0, 1.0 * testlen) * tr
     # timecoursein = np.zeros((testlen), dtype='float64')
-    timecoursein = np.float64(timeaxis * 0.0)
+    timecoursein = np.zeros_like(timeaxis, np.float64)
     midpoint = int(testlen // 2) + 1
     timecoursein[midpoint - 1] = np.float64(1.0)
     timecoursein[midpoint] = np.float64(1.0)

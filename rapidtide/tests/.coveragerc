@@ -6,18 +6,51 @@ sigterm = true
 source = .
 omit =
     __init__.py
-    ../__init__.py
-    ../scripts/__init__.py
-    ../OrthoImageItem.py
-    ../wiener2.py
-    ../tidepoolTemplate.py
-    ../tidepoolTemplate_alt.py
+    scripts/__init__.py
+    OrthoImageItem.py
+    Colortables.py
+    fMRIData_class.py
+    wiener2.py
+    _version.py
+    tidepoolTemplate.py
+    tidepoolTemplate_qt6.py
+    tidepoolTemplate_alt.py
+    tidepoolTemplate_alt_qt6.py
+    tidepoolTemplate_big.py
+    tidepoolTemplate_big_qt6.py
+    */tidepool.py
+    */delayvar.py
+    */variabilityizer.py
+    */synthASL.py
+    */proj2flow.py
+    */adjustoffset.py
+    notreadyforprimetime/*
+    setup.py
+    versioneer.py
 
 [report]
 exclude_lines = 
     # Don't complain if non-runnable code isn't run:
     if displayplots:
     if args.displayplots:
+    if args.display:
+    if doplot:
+    if args.doplot:
+    if args.displayplots:
     if debug:
+    if optiondict["debug"]:
+    if optiondict['debug']:
+    if args.debug:
+    if self.debug:
+    if verbose:
+    if optiondict["verbose"]:
+    if optiondict['verbose']:
+    if args.verbose:
+    if self.verbose:
     if False:
     if __name__ == .__main__.:
+    except np.lib.RankWarning:
+    except IndexError:
+    except ValueError:
+    except ImportError:
+    except OSError:

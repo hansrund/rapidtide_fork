@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -18,17 +18,39 @@
 #
 import argparse
 import sys
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.stats import skew
 
 import rapidtide.io as tide_io
 import rapidtide.workflows.parser_funcs as pf
 
 
-def _get_parser():
+def _get_parser() -> Any:
     """
-    Argument parser for plethquality
+    Argument parser for plethquality.
+
+    This function creates and configures an argument parser for the plethquality
+    command-line tool that calculates quality metrics from cardiac text files.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser object with all required and optional
+        arguments for plethquality functionality.
+
+    Notes
+    -----
+    The parser includes both required and optional arguments for processing
+    cardiac text files and generating quality metrics.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['input.txt', 'output.txt'])
     """
     parser = argparse.ArgumentParser(
         prog="plethquality",
@@ -57,43 +79,63 @@ def _get_parser():
     return parser
 
 
-def plethquality(waveform, Fs, S_windowsecs=5.0, debug=False):
+def plethquality_waveform(
+    waveform: Any, Fs: Any, S_windowsecs: float = 5.0, debug: bool = False
+) -> None:
     """
+    Calculate the windowed skewness quality metrics for a photoplethysmogram (PPG) signal.
+
+    This function computes the signal quality index based on the skewness of the PPG waveform
+    over a sliding window, as described in Elgendi, M. "Optimal Signal Quality Index for
+    Photoplethysmogram Signals". Bioengineering 2016, Vol. 3, Page 21 (2016).
 
     Parameters
     ----------
-    waveform: array-like
-        The cardiac waveform to be assessed
-    Fs: float
-        The sample rate of the data
-    S_windowsecs: float
-        Window duration in seconds.  Defaults to 2.0 (optimal according to Elgendi
-    debug: boolean
-        Turn on extended output
+    waveform : array-like
+        The cardiac waveform to be assessed.
+    Fs : float
+        The sample rate of the data in Hz.
+    S_windowsecs : float, optional
+        Window duration in seconds. Defaults to 5.0.
+    debug : bool, optional
+        Turn on extended output for debugging purposes. Defaults to False.
 
     Returns
     -------
-    S_sqi_mean: float
-        The mean value of the quality index over all time
-    S_std_mean: float
-        The standard deviation of the quality index over all time
-    S_waveform: array
-        The quality metric over all timepoints
+    S_sqi_mean : float
+        The mean value of the quality index over all time.
+    S_sqi_std : float
+        The standard deviation of the quality index over all time.
+    S_waveform : array
+        The quality metric computed over all timepoints.
 
+    Notes
+    -----
+    The window size is rounded to the nearest odd number of samples to ensure symmetric
+    sliding windows around each point. The skewness is calculated using `scipy.stats.skew`
+    with `nan_policy="omit"` to ignore NaN values.
 
-    Calculates the windowed skewness quality metrics described in Elgendi, M. "Optimal Signal Quality Index for
-    Photoplethysmogram Signals". Bioengineering 2016, Vol. 3, Page 21 3, 21 (2016).
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy.stats import skew
+    >>> waveform = np.random.randn(1000)
+    >>> Fs = 100.0
+    >>> mean_sqi, std_sqi, sqi_waveform = plethquality(waveform, Fs)
+    >>> print(f"Mean SQI: {mean_sqi:.3f}")
+    Mean SQI: 0.000
+
     """
     # calculate S_sqi over a sliding window.  Window size should be an odd number of points.
     S_windowpts = int(np.round(S_windowsecs * Fs, 0))
     S_windowpts += 1 - S_windowpts % 2
-    S_waveform = waveform * 0.0
+    S_waveform = np.zeros_like(waveform)
     if debug:
         print("S_windowsecs, S_windowpts:", S_windowsecs, S_windowpts)
     for i in range(0, len(waveform)):
         startpt = np.max([0, i - S_windowpts // 2])
         endpt = np.min([i + S_windowpts // 2, len(waveform)])
-        S_waveform[i] = skew(waveform[startpt : endpt + 1], nan_policy="omit")
+        S_waveform[i] = np.nan_to_num(skew(waveform[startpt : endpt + 1], nan_policy="omit"))
         if debug:
             print(i, startpt, endpt, endpt - startpt + 1, S_waveform[i])
 
@@ -103,7 +145,49 @@ def plethquality(waveform, Fs, S_windowsecs=5.0, debug=False):
     return S_sqi_mean, S_sqi_std, S_waveform
 
 
-def plethquality(args):
+def plethquality(args: Any) -> None:
+    """
+    Calculate plethysmography quality score and optionally display results.
+
+    This function reads plethysmography data from a text file, calculates a quality
+    score based on the signal characteristics, and writes the quality scores to an
+    output file. Optionally displays the quality score plot.
+
+    Parameters
+    ----------
+    args : Any
+        An object containing command line arguments with the following attributes:
+        - infilename : str
+            Input filename containing plethysmography data
+        - outfilename : str
+            Output filename for quality scores
+        - samplerate : float, optional
+            Sampling rate of the data (if not specified, will be read from file)
+        - display : bool
+            Whether to display the quality score plot
+
+    Returns
+    -------
+    None
+        This function does not return a value but writes results to files and
+        optionally displays plots.
+
+    Notes
+    -----
+    The function uses `tide_io.readvectorsfromtextfile` to read data and
+    `tide_io.writevec` to write quality scores. Quality scores are calculated
+    using an internal `plethquality` function that analyzes signal characteristics.
+
+    Examples
+    --------
+    >>> args = argparse.Namespace(
+    ...     infilename='pleth_data.txt',
+    ...     outfilename='quality_scores.txt',
+    ...     samplerate=100.0,
+    ...     display=True
+    ... )
+    >>> plethquality(args)
+    """
     if args.display:
         import matplotlib as mpl
 
@@ -121,7 +205,7 @@ def plethquality(args):
         sys.exit()
 
     # calculate the quality score
-    s_mean, s_std, quality = plethquality(plethdata, Fs)
+    s_mean, s_std, quality = plethquality_waveform(plethdata, Fs)
     print(args.infilename, s_mean, "+/-", s_std)
     tide_io.writevec(quality, args.outfilename)
 

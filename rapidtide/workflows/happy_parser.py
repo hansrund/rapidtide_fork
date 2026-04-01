@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2019-2024 Blaise Frederick
+#   Copyright 2019-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,17 +17,61 @@
 #
 #
 import argparse
-import sys
+from typing import Any, Optional
 
 import numpy as np
 
 import rapidtide.io as tide_io
+import rapidtide.multiproc as tide_multiproc
 import rapidtide.workflows.parser_funcs as pf
 
+try:
+    import tensorflow as tf
 
-def _get_parser():
+    tensorflowpresent = True
+except ImportError:
+    tensorflowpresent = False
+
+DEFAULT_ALIASEDCORRELATIONWIDTH = 5.0
+DEFAULT_PULSATILITYSIGMA = 6.0
+DEFAULT_PULSATILITYTHRESHOLD = 0.5
+DEFAULT_TF_DL_MODEL = "model_revised_tf2"
+DEFAULT_PT_DL_MODEL = "model_ppgattention_pytorch_w128_fulldata"
+
+
+def _get_parser() -> Any:
     """
-    Argument parser for happy
+    Create and configure an argument parser for the happy command-line tool.
+
+    This function sets up an `argparse.ArgumentParser` with numerous options for
+    configuring the hypersampling by analytic phase projection (HAPPY) pipeline.
+    It includes arguments for input files, processing steps, performance tuning,
+    preprocessing, cardiac and respiration estimation, output handling, and debugging.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser with all supported command-line options.
+
+    Notes
+    -----
+    The parser includes multiple argument groups for different functional areas:
+    - Processing steps
+    - Performance
+    - Preprocessing
+    - Cardiac estimation tuning
+    - External cardiac waveform options
+    - External respiration waveform options
+    - Output processing
+    - Output options
+    - Phase projection tuning
+    - Miscellaneous options
+    - Debugging options
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args()
     """
     parser = argparse.ArgumentParser(
         prog="happy",
@@ -70,18 +114,19 @@ def _get_parser():
         help="Disable deep learning cardiac waveform filter.  ",
         default=True,
     )
-    processing_steps.add_argument(
-        "--usesuperdangerousworkaround",
-        dest="mpfix",
-        action="store_true",
-        help=(
-            "Some versions of tensorflow seem to have some weird conflict with MKL which"
-            "I don't seem to be able to fix.  If the dl filter bombs complaining about "
-            "multiple openmp libraries, try rerunning with the secret and inadvisable "
-            "'--usesuperdangerousworkaround' flag.  Good luck! "
-        ),
-        default=False,
-    )
+    if tensorflowpresent:
+        processing_steps.add_argument(
+            "--usesuperdangerousworkaround",
+            dest="mpfix",
+            action="store_true",
+            help=(
+                "Some versions of tensorflow seem to have some weird conflict with MKL which"
+                "I don't seem to be able to fix.  If the dl filter bombs complaining about "
+                "multiple openmp libraries, try rerunning with the secret and inadvisable "
+                "'--usesuperdangerousworkaround' flag.  Good luck! "
+            ),
+            default=False,
+        )
     processing_steps.add_argument(
         "--slicetimesareinseconds",
         action="store_true",
@@ -98,10 +143,10 @@ def _get_parser():
         dest="modelname",
         metavar="MODELNAME",
         help=(
-            "Use model MODELNAME for dl filter (default is model_revised - "
-            "from the revised NeuroImage paper. "
+            f"Use model MODELNAME for dl filter (default is {DEFAULT_PT_DL_MODEL} - "
+            "from the revised NeuroImage paper.) "
         ),
-        default="model_revised",
+        default=None,
     )
 
     # Performance
@@ -119,7 +164,20 @@ def _get_parser():
         ),
         default=1,
     )
-
+    performance_opts.add_argument(
+        "--nprocs",
+        dest="nprocs",
+        action="store",
+        metavar="NPROCS",
+        type=lambda x: pf.is_int(parser, x),
+        help=(
+            "Use NPROCS CPUs to accelerate processing (defaults to 1 - more "
+            "CPUs up to the number of cores can accelerate processing a lot, but "
+            "you need to remember to ask for this many CPUs on clusters.)  Entering a mulitprocessor "
+            "routine disables mklthreads (otherwise there's chaos)."
+        ),
+        default=1,
+    )
     # Preprocessing
     preprocessing_opts = parser.add_argument_group("Preprocessing")
     preprocessing_opts.add_argument(
@@ -142,7 +200,7 @@ def _get_parser():
     )
     preprocessing_opts.add_argument(
         "--motionfile",
-        dest="motionfilename",
+        dest="motionfilespec",
         metavar="MOTFILE",
         help=(
             "Read 6 columns of motion regressors out of MOTFILE file (.par or BIDS .json) "
@@ -179,18 +237,22 @@ def _get_parser():
         default=True,
     )
     preprocessing_opts.add_argument(
-        "--motpos",
-        dest="motfilt_pos",
-        action="store_true",
-        help=("Include motion position regressors. "),
-        default=False,
-    )
-    preprocessing_opts.add_argument(
         "--nomotderiv",
         dest="motfilt_deriv",
         action="store_false",
         help=("Do not use motion derivative regressors. "),
         default=True,
+    )
+    preprocessing_opts.add_argument(
+        "--motfiltorder",
+        dest="motfilt_order",
+        action="store",
+        metavar="N",
+        type=lambda x: pf.is_int(parser, x),
+        help=(
+            "Include powers of each confound regressor up to order N. Default is 1 (no expansion). "
+        ),
+        default=1,
     )
     preprocessing_opts.add_argument(
         "--discardmotionfiltered",
@@ -199,14 +261,21 @@ def _get_parser():
         help=("Do not save data after motion filtering. "),
         default=True,
     )
+    preprocessing_opts.add_argument(
+        "--gmsfilt",
+        dest="gmsfilt",
+        action="store_true",
+        help=("Remove low frequency variation (experimental). "),
+        default=False,
+    )
 
     # Cardiac estimation tuning
     cardiac_est_tuning = parser.add_argument_group("Cardiac estimation tuning")
     cardiac_est_tuning.add_argument(
-        "--estmask",
-        dest="estmaskname",
+        "--estweights",
+        dest="estweightsname",
         action="store",
-        metavar="MASKNAME",
+        metavar="WEIGHTSNAME",
         help=(
             "Generation of cardiac waveform from data will be restricted to "
             "voxels in MASKNAME and weighted by the mask intensity.  If this is "
@@ -287,6 +356,15 @@ def _get_parser():
             "Use this if there is a contrast agent in the blood. "
         ),
         default=False,
+    )
+    cardiac_est_tuning.add_argument(
+        "--teoffset",
+        dest="teoffset",
+        action="store",
+        metavar="TE",
+        type=lambda x: pf.is_float(parser, x),
+        help="Specify the echo time in seconds.  This is used when combining multiecho data.  Default is 0. ",
+        default=None,
     )
 
     # External cardiac waveform options
@@ -427,17 +505,22 @@ def _get_parser():
         )
 
     # Output processing
-    output_proc = parser.add_argument_group("Output processing")
+    output_proc = parser.add_argument_group(
+        title="Output processing - mutually exclusive options",
+        description=(
+            "Optional cardiac noise removal.  You can do either spatial or temporal regression, but not both."
+        ),
+    ).add_mutually_exclusive_group()
     output_proc.add_argument(
-        "--spatialglm",
-        dest="dospatialglm",
+        "--spatialregression",
+        dest="dospatialregression",
         action="store_true",
         help="Generate framewise cardiac signal maps and filter them out of the input data. ",
         default=False,
     )
     output_proc.add_argument(
-        "--temporalglm",
-        dest="dotemporalglm",
+        "--temporalregression",
+        dest="dotemporalregression",
         action="store_true",
         help="Generate voxelwise aliased synthetic cardiac regressors and filter them out of the input data. ",
         default=False,
@@ -521,6 +604,31 @@ def _get_parser():
         help="Restrict cardiac waveform estimation to putative arteries only.",
         default=False,
     )
+    phase_proj_tuning.add_argument(
+        "--pulsatilitysigma",
+        dest="pulsatilitysigma",
+        action="store",
+        metavar="SIGMAINMM",
+        type=lambda x: pf.is_float(parser, x),
+        help=(
+            "Split pulsatility map spatial frequencies with a gaussian filter with sigma=SIGMAINMM. "
+            f"Default is {DEFAULT_PULSATILITYSIGMA}mm. "
+        ),
+        default=DEFAULT_PULSATILITYSIGMA,
+    )
+    phase_proj_tuning.add_argument(
+        "--pulsatilitythreshold",
+        dest="pulsatilitythreshold",
+        action="store",
+        metavar="THRESHPCT",
+        type=lambda x: pf.is_float(parser, x),
+        help=(
+            "Consider voxels with a high spatial frequency pulsatility above THRESHPCT percent "
+            "to be vessels. "
+            f"Default is {DEFAULT_PULSATILITYTHRESHOLD}mm. "
+        ),
+        default=DEFAULT_PULSATILITYSIGMA,
+    )
 
     # Add version options
     pf.addversionopts(parser)
@@ -528,11 +636,32 @@ def _get_parser():
     # Add miscellaneous options
     misc_opts = parser.add_argument_group("Miscellaneous options.")
     misc_opts.add_argument(
+        "--processmask",
+        dest="processmask",
+        action="store",
+        metavar="MASKNAME",
+        help=(
+            "Instead of dynamically generating a processing mask from the data, use "
+            "the mask specified in the file MASKNAME. "
+            "The mask must be a 3D NIFTI file with x, y, z dimensions matching the fMRI data. "
+        ),
+        default=None,
+    )
+    misc_opts.add_argument(
         "--aliasedcorrelation",
         dest="doaliasedcorrelation",
         action="store_true",
         help="Attempt to calculate absolute delay using an aliased correlation (experimental).",
         default=False,
+    )
+    misc_opts.add_argument(
+        "--aliasedcorrelationwidth",
+        dest="aliasedcorrelationwidth",
+        metavar="WIDTH",
+        action="store",
+        type=lambda x: pf.is_float(parser, x),
+        help=f"Width of the aliased correlation calculation (default is {DEFAULT_ALIASEDCORRELATIONWIDTH}). ",
+        default=DEFAULT_ALIASEDCORRELATIONWIDTH,
     )
     misc_opts.add_argument(
         "--upsample",
@@ -555,6 +684,21 @@ def _get_parser():
         help="Will disable showing progress bars (helpful if stdout is going to a file). ",
         default=True,
     )
+    misc_opts.add_argument(
+        "--wrightiterations",
+        dest="wrightiterations",
+        action="store",
+        type=lambda x: pf.is_int(parser, x),
+        help="Number of iterations for calculating Wright map. Set to 0 to disable.",
+        default=0,
+    )
+    misc_opts.add_argument(
+        "--useoldvesselmethod",
+        dest="useoriginalvesselmethod",
+        action="store_true",
+        help="Will use the old method to find blood vessels. ",
+        default=False,
+    )
     pf.addtagopts(
         misc_opts,
         helptext="Additional key, value pairs to add to the info json file (useful for tracking analyses).",
@@ -576,6 +720,13 @@ def _get_parser():
         type=lambda x: pf.is_int(parser, 0),
         help="Disable data detrending. ",
         default=3,
+    )
+    debug_opts.add_argument(
+        "--normvesselmap",
+        dest="unnormvesselmap",
+        action="store_false",
+        help="Find vessels using normalized phase projection. ",
+        default=True,
     )
     debug_opts.add_argument(
         "--noorthog",
@@ -654,35 +805,92 @@ def _get_parser():
         help="Decrease the number of intermediate output files. ",
         default=0,
     )
+    debug_opts.add_argument(
+        "--nompdetrend",
+        dest="mpdetrend",
+        action="store_false",
+        help="Disable multiproc detrending.",
+        default=True,
+    )
+    debug_opts.add_argument(
+        "--nompphaseproject",
+        dest="mpphaseproject",
+        action="store_false",
+        help="Disable multiproc phase projection.",
+        default=True,
+    )
+    debug_opts.add_argument(
+        "--noprefillcongrid",
+        dest="preloadcongrid",
+        action="store_false",
+        help="Don't prefill the congrid value cache.",
+        default=True,
+    )
+    debug_opts.add_argument(
+        "--nocongridcache",
+        dest="congridcache",
+        action="store_false",
+        help="Disable the congrid value cache completely.",
+        default=True,
+    )
+    if tensorflowpresent:
+        debug_opts.add_argument(
+            "--usetensorflow",
+            dest="usepytorch",
+            action="store_false",
+            help=("Switch to the old style tensorflow deep learning filter"),
+            default=True,
+        )
+    debug_opts.add_argument(
+        "--focaldebug",
+        dest="focaldebug",
+        action="store_true",
+        help=("Enable targeted additional debugging output (used during development)."),
+        default=False,
+    )
 
     return parser
 
 
-def process_args(inputargs=None):
+def process_args(inputargs: Optional[Any] = None) -> Any:
     """
-    Compile arguments for rapidtide workflow.
+    Compile arguments for happy workflow.
+
+    This function processes input arguments for the happy workflow, handling
+    argument parsing, command line formatting, default model selection, and post-processing
+    of various parameters. It also manages motion file specifications, multiprocessing
+    settings, and output level calculations.
+
+    Parameters
+    ----------
+    inputargs : optional
+        Input arguments to be processed. If None, arguments are parsed from the command line.
+        Default is None.
+
+    Returns
+    -------
+    args : argparse.Namespace
+        Processed arguments namespace containing all parsed and defaulted values.
+
+    Notes
+    -----
+    - If no model is specified, the function sets a default based on whether PyTorch or TensorFlow
+      is being used.
+    - The function writes formatted command line arguments to files for logging purposes.
+    - Multiprocessing is currently disabled due to instability.
+    - The output level is adjusted based on user-provided increments and decrements.
+
+    Examples
+    --------
+    >>> args = process_args()
+    >>> print(args.outputroot)
+    >>> print(args.modelname)
     """
-    if inputargs is None:
-        print("processing command line arguments")
-        # write out the command used
-        try:
-            args = _get_parser().parse_args()
-            argstowrite = sys.argv
-        except SystemExit:
-            _get_parser().print_help()
-            raise
-    else:
-        print("processing passed argument list:")
-        try:
-            args = _get_parser().parse_args(inputargs)
-            argstowrite = inputargs
-        except SystemExit:
-            print("Use --help option for detailed informtion on options.")
-            raise
+    args, argstowrite = pf.setargs(_get_parser, inputargs=inputargs)
 
     # save the raw and formatted command lines
     args.commandline = " ".join(argstowrite)
-    tide_io.writevec([args.commandline], args.outputroot + "_commandline.txt")
+    tide_io.writevec(np.array([args.commandline]), args.outputroot + "_commandline.txt")
     formattedcommandline = []
     for thetoken in argstowrite[0:3]:
         formattedcommandline.append(thetoken)
@@ -701,7 +909,20 @@ def process_args(inputargs=None):
         else:
             suffix = ""
         formattedcommandline[i] = prefix + formattedcommandline[i] + suffix
-    tide_io.writevec(formattedcommandline, args.outputroot + "_formattedcommandline.txt")
+    tide_io.writevec(np.array(formattedcommandline), args.outputroot + "_formattedcommandline.txt")
+
+    if not tensorflowpresent:
+        args.usepytorch = True
+        args.mpfix = False
+
+    # if user did not specify a model, set the default, depending on DL library
+    if args.modelname is None:
+        if args.usepytorch:
+            args.modelname = DEFAULT_PT_DL_MODEL
+        else:
+            args.modelname = DEFAULT_TF_DL_MODEL
+        if args.debug:
+            print(f"No model specified.  {args.usepytorch=}, so using {args.modelname}")
 
     if args.debug:
         print()
@@ -712,25 +933,35 @@ def process_args(inputargs=None):
     args.outputlevel = 1
     args.maskthreshpct = 10.0
     args.domadnorm = True
-    args.nprocs = 1
     args.verbose = False
     args.smoothlen = 101
     args.envthresh = 0.2
     args.upsamplefac = 100
     args.centric = True
     args.pulsereconstepsize = 0.01
-    args.aliasedcorrelationwidth = 3.0
-    args.unnormvesselmap = True
     args.histlen = 100
     args.softvesselfrac = 0.4
     args.savecardiacnoise = True
     args.colnum = None
     args.colname = None
+    args.notchrolloff = 0.5
 
     # Additional argument parsing not handled by argparse
     # deal with notch filter logic
     if args.disablenotch:
         args.notchpct = None
+
+    # process motionfile information
+    if args.motionfilespec is not None:
+        args.motionfilename, args.motionfilecolspec = tide_io.parsefilespec(args.motionfilespec)
+    else:
+        args.motionfilename = None
+
+    # set the number of worker processes if multiprocessing
+    # Multiprocessing is very broken atm.  Hard disable it.
+    # args.nprocs = 1
+    if args.nprocs < 1:
+        args.nprocs = tide_multiproc.maxcpus()
 
     # process infotags
     args = pf.postprocesstagopts(args)

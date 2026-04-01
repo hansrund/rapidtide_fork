@@ -5,6 +5,7 @@ DATE
 changecalls
 
 .circleci/*.safe
+.run
 
 .vscode
 
@@ -17,15 +18,17 @@ safezone
 v2changes
 
 # experimental directory
-rapidtide/experimental
+rapidtide/experimental/model_*
 
 # any generated test data
 rapidtide/data/examples/dst/*
-rapidtide/tests/tmp/[abcdefghijklmnopqrstuvwxyz]*
+rapidtide/tests/tmp/[0123456789abcdefghijklmnopqrstuvwxyz]*
 rapidtide/tests/*.jpg
 rapidtide/tests/*.json
 rapidtide/tests/*.tsv.gz
 rapidtide/tests/*.nii.gz
+#rapidtide/tests/testdata/*
+rapidtide/tests/.coveragerc.*
 
 # test data in databundle dir
 rapidtide/data/examples/databundle/happytest/
@@ -67,6 +70,9 @@ getphase.py
 
 # PyCharm files
 .idea
+
+# VSCode files
+.vscode
 
 # any local safety copies
 *.safe
@@ -188,8 +194,13 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# complexipy data
+.complexipy_cache
+
 default.profraw
 
 *.xlsx
 
 docs/practicalities.rst
+
+standalone/

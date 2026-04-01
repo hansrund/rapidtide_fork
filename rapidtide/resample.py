@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -18,31 +18,23 @@
 #
 import sys
 import time
-import warnings
+from typing import Any, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    try:
-        import pyfftw
-    except ImportError:
-        pyfftwpresent = False
-    else:
-        pyfftwpresent = True
-
-import pylab as pl
+import pyfftw
 import scipy as sp
-from scipy import fftpack, signal
+from numpy.typing import ArrayLike, NDArray
+from scipy import fft, signal
 
 import rapidtide.filter as tide_filt
 import rapidtide.fit as tide_fit
 import rapidtide.io as tide_io
 import rapidtide.util as tide_util
 
-if pyfftwpresent:
-    fftpack = pyfftw.interfaces.scipy_fftpack
-    pyfftw.interfaces.cache.enable()
+# Use pyfftw as the backend for all scipy.fft operations
+sp.fft.set_backend(pyfftw.interfaces.scipy_fft)
+pyfftw.interfaces.cache.enable()
 
 
 # this is here until numpy deals with their fft issue
@@ -50,124 +42,86 @@ import warnings
 
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
-# ---------------------------------------- Global constants -------------------------------------------
-donotbeaggressive = True
-
-# ----------------------------------------- Conditional imports ---------------------------------------
-try:
-    from numba import jit
-except ImportError:
-    donotusenumba = True
-else:
-    donotusenumba = False
-
-
-def conditionaljit():
-    def resdec(f):
-        if donotusenumba:
-            return f
-        return jit(f, nopython=True)
-
-    return resdec
-
-
-def conditionaljit2():
-    def resdec(f):
-        if donotusenumba or donotbeaggressive:
-            return f
-        return jit(f, nopython=True)
-
-    return resdec
-
-
-def disablenumba():
-    global donotusenumba
-    donotusenumba = True
-
-
 # --------------------------- Resampling and time shifting functions -------------------------------------------
-"""
-class ConvolutionGridder:
-    def __init__(self, timeaxis, width, method='gauss', circular=True, upsampleratio=100, doplot=False, debug=False):
-        self.upsampleratio = upsampleratio
-        self.initstep = timeaxis[1] - timeaxis[0]
-        self.initstart = timeaxis[0]
-        self.initend = timeaxis[-1]
-        self.hiresstep = self.initstep / np.float64(self.upsampleratio)
-        if method == 'gauss':
-            fullwidth = 2.355 * width
-        fullwidthpts = int(np.round(fullwidth / self.hiresstep, 0))
-        fullwidthpts += ((fullwidthpts % 2) - 1)
-        self.hires_x = np.linspace(-fullwidth / 2.0, fullwidth / 2.0, numpts = fullwidthpts, endpoint=True)
-        if method == 'gauss':
-            self.hires_y = tide_fit.gauss_eval(self.hires_x, np.array([1.0, 0.0, width])
-        if debug:
-            print(self.hires_x)
-        if doplot:
-            fig = pl.figure()
-            ax = fig.add_subplot(111)
-            ax.set_title('congrid convolution function')
-            pl.plot(self.hires_x, self.hires_y)
-            pl.legend(('input', 'hires'))
-            pl.show()
-
-    def gridded(xvals, yvals):
-        if len(xvals) != len(yvals):
-            print('x and y vectors do not match - aborting')
-            return None
-        for i in range(len(xvals)):
-        outindices = ((newtimeaxis - self.hiresstart) // self.hiresstep).astype(int)
-"""
-
-congridyvals = {}
+congridyvals: dict = {}
 congridyvals["kernel"] = "kaiser"
 congridyvals["width"] = 3.0
 
 
-def congrid(xaxis, loc, val, width, kernel="kaiser", cyclic=True, debug=False):
+def congrid(
+    xaxis: NDArray[np.floating[Any]],
+    loc: float,
+    val: float,
+    width: float,
+    kernel: str = "kaiser",
+    cache: bool = True,
+    cyclic: bool = True,
+    debug: bool = False,
+    onlykeynotices: bool = True,
+) -> Tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """
-    Perform a convolution gridding operation with a Kaiser-Bessel or Gaussian kernel of width 'width'.  Grid
-    parameters are cached for performance.
+    Perform a convolution gridding operation with a Kaiser-Bessel or Gaussian kernel.
+
+    This function convolves a given value with a specified gridding kernel and projects
+    the result onto a target axis. It supports both cyclic and non-cyclic boundary
+    conditions and caches kernel values for performance optimization.
 
     Parameters
     ----------
-    xaxis: array-like
-        The target axis for resampling
-    loc: float
-        The location, in x-axis units, of the sample to be gridded
-    val: float
-        The value to be gridded
-    width: float
-        The width of the gridding kernel in target bins
-    kernel: {'old', 'gauss', 'kaiser'}, optional
-        The type of convolution gridding kernel.  Default is 'kaiser'.
-    cyclic: bool, optional
-        When True, gridding wraps around the endpoints of xaxis.  Default is True.
-    debug: bool, optional
-        When True, output additional information about the gridding process
+    xaxis : NDArray[np.floating[Any]]
+        The target axis for resampling. Should be a 1D array of evenly spaced points.
+    loc : float
+        The location, in x-axis units, of the sample to be gridded.
+    val : float
+        The value to be gridded.
+    width : float
+        The width of the gridding kernel in target bins. Must be a half-integral value
+        between 1.5 and 5.0 inclusive.
+    kernel : {'old', 'gauss', 'kaiser'}, optional
+        The type of convolution gridding kernel. Default is 'kaiser'.
+        - 'old': Uses a Gaussian kernel with fixed width.
+        - 'gauss': Uses a Gaussian kernel with optimized sigma.
+        - 'kaiser': Uses a Kaiser-Bessel kernel with optimized beta.
+    cache : bool, optional
+        If True, caches kernel values for performance. Default is True.
+    cyclic : bool, optional
+        When True, gridding wraps around the endpoints of xaxis. Default is True.
+    debug : bool, optional
+        When True, outputs additional information about the gridding process.
+        Default is False.
+    onlykeynotices : bool, optional
+        When True, suppresses certain debug messages. Default is True.
 
     Returns
     -------
-    vals: array-like
-        The input value, convolved with the gridding kernel, projected on to x axis points
-    weights: array-like
-        The values of convolution kernel, projected on to x axis points (used for normalization)
-    indices: array-like
-        The indices along the x axis where the vals and weights fall.
+    vals : NDArray[np.floating[Any]]
+        The input value, convolved with the gridding kernel, projected onto x-axis points.
+    weights : NDArray[np.floating[Any]]
+        The values of the convolution kernel, projected onto x-axis points (used for normalization).
+    indices : NDArray[int[Any]]
+        The indices along the x-axis where the vals and weights fall.
 
     Notes
     -----
-    See  IEEE TRANSACTIONS ON MEDICAL IMAGING. VOL. IO.NO. 3, SEPTEMBER 1991
+    This implementation is based on the method described in:
+    IEEE TRANSACTIONS ON MEDICAL IMAGING. VOL. 10, NO. 3, SEPTEMBER 1991
 
+    Examples
+    --------
+    >>> import numpy as np
+    >>> xaxis = np.linspace(0, 10, 100)
+    >>> vals, weights, indices = congrid(xaxis, 5.5, 1.0, 2.0)
+    >>> print(vals.shape)
+    (100,)
     """
     global congridyvals
 
     if (congridyvals["kernel"] != kernel) or (congridyvals["width"] != width):
         if congridyvals["kernel"] != kernel:
-            if debug:
+            if debug and not onlykeynotices:
                 print(congridyvals["kernel"], "!=", kernel)
         if congridyvals["width"] != width:
-            if debug:
+            if debug and not onlykeynotices:
                 print(congridyvals["width"], "!=", width)
         if debug:
             print("(re)initializing congridyvals")
@@ -191,7 +145,7 @@ def congrid(xaxis, loc, val, width, kernel="kaiser", cyclic=True, debug=False):
 
     # find the closest grid point to the target location, calculate relative offsets from this point
     center = tide_util.valtoindex(xaxis, loc)
-    offset = np.fmod(np.round((loc - xaxis[center]) / xstep, 3), 1.0)  # will vary from -0.5 to 0.5
+    offset = np.fmod(np.round((loc - xaxis[center]) / xstep, 4), 1.0)  # will vary from -0.5 to 0.5
     if cyclic:
         if center == len(xaxis) - 1 and offset > 0.5:
             center = 0
@@ -224,40 +178,43 @@ def congrid(xaxis, loc, val, width, kernel="kaiser", cyclic=True, debug=False):
                 )
                 + offset
             )
-            congridyvals[offsetkey] = tide_fit.gauss_eval(xvals, np.array([1.0, 0.0, width]))
-            yvals = congridyvals[offsetkey]
+            yvals = tide_fit.gauss_eval(xvals, np.array([1.0, 0.0, width]))
+            if cache:
+                congridyvals[offsetkey] = 1.0 * yvals
         startpt = int(center - widthinpts // 2)
         indices = range(startpt, startpt + widthinpts)
         indices = np.remainder(indices, len(xaxis))
-        if debug:
+        if debug and not onlykeynotices:
             print("center, offset, indices, yvals", center, offset, indices, yvals)
         return val * yvals, yvals, indices
     else:
         offsetinpts = center + offset
         startpt = int(np.ceil(offsetinpts - width / 2.0))
         endpt = int(np.floor(offsetinpts + width / 2.0))
-        indices = np.remainder(range(startpt, endpt + 1), len(xaxis))
+        rawindices = np.arange(startpt, endpt + 1)
+        indices = np.remainder(rawindices, len(xaxis))
         try:
             yvals = congridyvals[offsetkey]
         except KeyError:
             if debug:
                 print("new key:", offsetkey)
-            xvals = indices - center + offset
+            # Compute distances from the unwrapped sample location to avoid
+            # edge wrapping artifacts in cyclic mode.
+            xvals = rawindices - offsetinpts
             if kernel == "gauss":
                 sigma = optsigma[kernelindex]
-                congridyvals[offsetkey] = tide_fit.gauss_eval(xvals, np.array([1.0, 0.0, sigma]))
+                yvals = tide_fit.gauss_eval(xvals, np.array([1.0, 0.0, sigma]))
             elif kernel == "kaiser":
                 beta = optbeta[kernelindex]
-                congridyvals[offsetkey] = tide_fit.kaiserbessel_eval(
-                    xvals, np.array([beta, width / 2.0])
-                )
+                yvals = tide_fit.kaiserbessel_eval(xvals, np.array([beta, width / 2.0]))
             else:
                 print("illegal kernel value in congrid - exiting")
                 sys.exit()
-            yvals = congridyvals[offsetkey]
-            if debug:
+            if cache:
+                congridyvals[offsetkey] = 1.0 * yvals
+            if debug and not onlykeynotices:
                 print("xvals, yvals", xvals, yvals)
-        if debug:
+        if debug and not onlykeynotices:
             print("center, offset, indices, yvals", center, offset, indices, yvals)
         return val * yvals, yvals, indices
 
@@ -273,6 +230,53 @@ class FastResampler:
         debug=False,
         method="univariate",
     ):
+        """
+        Initialize the FastResampler with given time axis and time course data.
+
+        This constructor prepares high-resolution time series data by resampling the input
+        time course using one of several methods, with optional padding and plotting.
+
+        Parameters
+        ----------
+        timeaxis : array-like
+            The time axis of the input data. Should be a 1D array of time points.
+        timecourse : array-like
+            The time course data corresponding to `timeaxis`. Should be a 1D array of values.
+        padtime : float, optional
+            Padding time in seconds to extend the resampled time axis on both ends.
+            Default is 30.0.
+        upsampleratio : int, optional
+            The upsampling ratio used for resampling. Default is 100.
+        doplot : bool, optional
+            If True, plot the original and high-resolution time courses. Default is False.
+        debug : bool, optional
+            If True, print debug information during initialization. Default is False.
+        method : str, optional
+            Resampling method to use. Options are:
+            - "univariate": Uses custom resampling logic.
+            - "poly": Uses `scipy.signal.resample_poly`.
+            - "fourier": Uses `scipy.signal.resample`.
+            Default is "univariate".
+
+        Returns
+        -------
+        None
+            This method initializes instance attributes and does not return a value.
+
+        Notes
+        -----
+        The resampled time axis (`hires_x`) is generated by extending the original time axis
+        by `padtime` on each side, using a step size that is `1 / upsampleratio` of the
+        original step size. The `hires_y` array contains the resampled time course values.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from scipy import signal
+        >>> timeaxis = np.linspace(0, 10, 100)
+        >>> timecourse = np.sin(timeaxis)
+        >>> resampler = FastResampler(timeaxis, timecourse, padtime=5.0, method="poly")
+        """
         self.timeaxis = timeaxis
         self.timecourse = timecourse
         self.upsampleratio = upsampleratio
@@ -282,24 +286,25 @@ class FastResampler:
         self.initend = timeaxis[-1]
         self.hiresstep = self.initstep / np.float64(self.upsampleratio)
         self.hires_x = np.arange(
-            timeaxis[0] - self.padtime,
-            self.initstep * len(timeaxis) + self.padtime,
+            self.initstart - self.padtime,
+            self.initstart + self.initstep * len(timeaxis) + self.padtime,
             self.hiresstep,
         )
         self.hiresstart = self.hires_x[0]
         self.hiresend = self.hires_x[-1]
-        if method == "poly":
+        self.method = method
+        pad_samples = int(self.padtime // self.hiresstep)
+        resampled_len = self.upsampleratio * len(timeaxis)
+        if self.method == "poly":
             self.hires_y = 0.0 * self.hires_x
-            self.hires_y[
-                int(self.padtime // self.hiresstep)
-                + 1 : -(int(self.padtime // self.hiresstep) + 1)
-            ] = signal.resample_poly(timecourse, int(self.upsampleratio * 10), 10)
-        elif method == "fourier":
+            self.hires_y[pad_samples : pad_samples + resampled_len] = signal.resample_poly(
+                timecourse, int(self.upsampleratio * 10), 10
+            )
+        elif self.method == "fourier":
             self.hires_y = 0.0 * self.hires_x
-            self.hires_y[
-                int(self.padtime // self.hiresstep)
-                + 1 : -(int(self.padtime // self.hiresstep) + 1)
-            ] = signal.resample(timecourse, self.upsampleratio * len(timeaxis))
+            self.hires_y[pad_samples : pad_samples + resampled_len] = signal.resample(
+                timecourse, resampled_len
+            )
         else:
             self.hires_y = doresample(timeaxis, timecourse, self.hires_x, method=method)
         self.hires_y[: int(self.padtime // self.hiresstep)] = self.hires_y[
@@ -318,16 +323,146 @@ class FastResampler:
         # self.hires_y[:int(self.padtime // self.hiresstep)] = 0.0
         # self.hires_y[-int(self.padtime // self.hiresstep):] = 0.0
         if doplot:
-            import matplolib.pyplot as pl
+            import matplotlib.pyplot as plt
 
-            fig = pl.figure()
+            fig = plt.figure()
             ax = fig.add_subplot(111)
             ax.set_title("FastResampler initial timecourses")
-            pl.plot(timeaxis, timecourse, self.hires_x, self.hires_y)
-            pl.legend(("input", "hires"))
-            pl.show()
+            plt.plot(timeaxis, timecourse, self.hires_x, self.hires_y)
+            plt.legend(("input", "hires"))
+            plt.show()
+
+    def getdata(self):
+        """
+        Retrieve time series data and related parameters.
+
+        Returns
+        -------
+        tuple
+            A tuple containing:
+            - timeaxis : array_like
+                Time axis values
+            - timecourse : array_like
+                Time course data values
+            - hires_x : array_like
+                High resolution x-axis data
+            - hires_y : array_like
+                High resolution y-axis data
+            - inverse_initstep : float
+                Reciprocal of the initial step size (1.0 / self.initstep)
+
+        Notes
+        -----
+        This function provides access to all time series data and associated
+        high resolution parameters stored in the object instance. The returned
+        inverse_initstep value is commonly used for normalization or scaling
+        operations in time series analysis.
+
+        Examples
+        --------
+        >>> data = obj.getdata()
+        >>> time_axis, time_course, hires_x, hires_y, inv_step = data
+        >>> print(f"Time course shape: {time_course.shape}")
+        """
+        return self.timeaxis, self.timecourse, self.hires_x, self.hires_y, 1.0 / self.initstep
+
+    def info(self, prefix=""):
+        """
+        Print information about the object's time and sampling parameters.
+
+        This method displays various time-related attributes and sampling parameters
+        of the object, with optional prefix for better formatting in output.
+
+        Parameters
+        ----------
+        prefix : str, optional
+            String to prepend to each printed line, useful for indentation or
+            grouping related output. Default is empty string.
+
+        Returns
+        -------
+        None
+            This method prints information to stdout and does not return any value.
+
+        Notes
+        -----
+        The method prints the following attributes:
+        - timeaxis: Time axis values
+        - timecourse: Time course data
+        - upsampleratio: Upsampling ratio
+        - padtime: Padding time
+        - initstep: Initial step size
+        - initstart: Initial start time
+        - initend: Initial end time
+        - hiresstep: High-resolution step size
+        - hires_x[0]: First value of high-resolution x-axis
+        - hires_x[-1]: Last value of high-resolution x-axis
+        - hiresstart: High-resolution start time
+        - hiresend: High-resolution end time
+        - method: Interpolation/processing method used
+        - hires_y[0]: First value of high-resolution y-axis
+        - hires_y[-1]: Last value of high-resolution y-axis
+
+        Examples
+        --------
+        >>> obj.info()
+        timeaxis=100
+        timecourse=200
+        upsampleratio=4
+        ...
+
+        >>> obj.info(prefix="  ")
+          timeaxis=100
+          timecourse=200
+          upsampleratio=4
+          ...
+        """
+        print(f"{prefix}{self.timeaxis=}")
+        print(f"{prefix}{self.timecourse=}")
+        print(f"{prefix}{self.upsampleratio=}")
+        print(f"{prefix}{self.padtime=}")
+        print(f"{prefix}{self.initstep=}")
+        print(f"{prefix}{self.initstart=}")
+        print(f"{prefix}{self.initend=}")
+        print(f"{prefix}{self.hiresstep=}")
+        print(f"{prefix}{self.hires_x[0]=}")
+        print(f"{prefix}{self.hires_x[-1]=}")
+        print(f"{prefix}{self.hiresstart=}")
+        print(f"{prefix}{self.hiresend=}")
+        print(f"{prefix}{self.method=}")
+        print(f"{prefix}{self.hires_y[0]=}")
+        print(f"{prefix}{self.hires_y[-1]=}")
 
     def save(self, outputname):
+        """
+        Save the timecourse data to a TSV file.
+
+        This method writes the internal timecourse data to a tab-separated values file
+        with additional metadata in the header. The output includes the timecourse data
+        along with timing information derived from the object's initialization parameters.
+
+        Parameters
+        ----------
+        outputname : str
+            The path and filename where the TSV output will be saved.
+
+        Returns
+        -------
+        None
+            This method does not return any value.
+
+        Notes
+        -----
+        The method uses the `tide_io.writebidstsv` function to perform the actual file writing.
+        The time step is calculated as 1.0 divided by `self.initstep`, and the start time
+        is taken from `self.initstart`. The output file includes a header with description
+        metadata indicating this is a lagged timecourse generator.
+
+        Examples
+        --------
+        >>> obj.save("output_timecourse.tsv")
+        >>> # Creates a TSV file with the timecourse data and metadata
+        """
         tide_io.writebidstsv(
             outputname,
             self.timecourse,
@@ -339,6 +474,41 @@ class FastResampler:
         )
 
     def yfromx(self, newtimeaxis, doplot=False, debug=False):
+        """
+        Resample y-values from a high-resolution time axis to a new time axis.
+
+        This method maps values from a high-resolution y-array (`self.hires_y`) to a
+        new time axis (`newtimeaxis`) by linear interpolation based on the step size
+        and start of the high-resolution axis.
+
+        Parameters
+        ----------
+        newtimeaxis : array-like
+            The new time axis to which the y-values will be resampled.
+        doplot : bool, optional
+            If True, plot the original high-resolution y-values and the resampled
+            values for comparison. Default is False.
+        debug : bool, optional
+            If True, print debug information including internal parameters and
+            bounds checking. Default is False.
+
+        Returns
+        -------
+        out_y : ndarray
+            The resampled y-values corresponding to `newtimeaxis`.
+
+        Notes
+        -----
+        This function assumes that `self.hires_y` has been precomputed and that
+        the internal parameters (`self.hiresstart`, `self.hiresstep`) are valid.
+        An IndexError is raised if any index in `outindices` is out of bounds.
+
+        Examples
+        --------
+        >>> resampler = FastResampler()
+        >>> new_times = np.linspace(0, 10, 100)
+        >>> y_vals = resampler.yfromx(new_times, doplot=True)
+        """
         if debug:
             print("FastResampler: yfromx called with following parameters")
             print("    padtime:, ", self.padtime)
@@ -361,16 +531,59 @@ class FastResampler:
             print("    requested axis limits:", newtimeaxis[0], newtimeaxis[-1])
             sys.exit()
         if doplot:
-            fig = pl.figure()
+            fig = plt.figure()
             ax = fig.add_subplot(111)
             ax.set_title("FastResampler timecourses")
-            pl.plot(self.hires_x, self.hires_y, newtimeaxis, out_y)
-            pl.legend(("hires", "output"))
-            pl.show()
+            plt.plot(self.hires_x, self.hires_y, newtimeaxis, out_y)
+            plt.legend(("hires", "output"))
+            plt.show()
         return out_y
 
 
-def FastResamplerFromFile(inputname, colspec=None, debug=False, **kwargs):
+def FastResamplerFromFile(
+    inputname: str, colspec: Optional[str] = None, debug: bool = False, **kwargs
+) -> FastResampler:
+    """
+    Create a FastResampler from a BIDS TSV file.
+
+    This function reads data from a BIDS TSV file and creates a FastResampler object
+    for efficient time series resampling operations. The input file must contain
+    exactly one column of data.
+
+    Parameters
+    ----------
+    inputname : str
+        Path to the input BIDS TSV file containing the time series data
+    colspec : str, optional
+        Column specification for selecting specific columns from the TSV file.
+        If None, all columns are read (default: None)
+    debug : bool, optional
+        Enable debug output printing (default: False)
+    **kwargs
+        Additional keyword arguments passed to the FastResampler constructor
+
+    Returns
+    -------
+    FastResampler
+        A FastResampler object initialized with the time axis and data from the input file
+
+    Raises
+    ------
+    ValueError
+        If the input file contains multiple columns of data
+
+    Notes
+    -----
+    The function internally calls `tide_io.readbidstsv` to read the input file and
+    constructs a time axis using `np.linspace` based on the sampling rate and
+    start time from the input file.
+
+    Examples
+    --------
+    >>> resampler = FastResamplerFromFile('data.tsv')
+    >>> resampler = FastResamplerFromFile('data.tsv', colspec='column1')
+    >>> resampler = FastResamplerFromFile('data.tsv', debug=True)
+    """
     (
         insamplerate,
         instarttime,
@@ -378,9 +591,13 @@ def FastResamplerFromFile(inputname, colspec=None, debug=False, **kwargs):
         indata,
         incompressed,
         incolsource,
+        inextrainfo,
     ) = tide_io.readbidstsv(inputname, colspec=colspec, debug=debug)
-    if len(incolumns) > 1:
-        raise ValueError("Multiple columns in input file")
+    if incolumns is not None:
+        if len(incolumns) > 1:
+            raise ValueError("Multiple columns in input file")
+    else:
+        raise ValueError("No column names in file")
     intimecourse = indata[0, :]
     intimeaxis = np.linspace(
         instarttime,
@@ -394,29 +611,65 @@ def FastResamplerFromFile(inputname, colspec=None, debug=False, **kwargs):
 
 
 def doresample(
-    orig_x,
-    orig_y,
-    new_x,
-    method="cubic",
-    padlen=0,
-    padtype="reflect",
-    antialias=False,
-    debug=False,
-):
+    orig_x: NDArray,
+    orig_y: NDArray,
+    new_x: NDArray,
+    method: str = "cubic",
+    padlen: int = 0,
+    padtype: str = "reflect",
+    antialias: bool = False,
+    debug: bool = False,
+) -> NDArray:
     """
-    Resample data from one spacing to another.  By default, does not apply any antialiasing filter.
+    Resample data from one spacing to another.
+
+    By default, does not apply any antialiasing filter.
 
     Parameters
     ----------
-    orig_x
-    orig_y
-    new_x
-    method
-    padlen
+    orig_x : NDArray
+        Original x-coordinates of the data to be resampled.
+    orig_y : NDArray
+        Original y-values corresponding to `orig_x`.
+    new_x : NDArray
+        New x-coordinates at which to evaluate the resampled data.
+    method : str, optional
+        Interpolation method to use. Options are:
+        - "cubic": cubic spline interpolation (default)
+        - "quadratic": quadratic spline interpolation
+        - "univariate": univariate spline interpolation using `scipy.interpolate.UnivariateSpline`
+    padlen : int, optional
+        Number of elements to pad the input data at both ends. Default is 0.
+    padtype : str, optional
+        Type of padding to use when `padlen > 0`. Default is "reflect".
+        Passed to `tide_filt.padvec`.
+    antialias : bool, optional
+        If True, apply an antialiasing filter before resampling if the original
+        sampling frequency is higher than the target frequency. Default is False.
+    debug : bool, optional
+        If True, print debug information and display a plot of the original and
+        padded data. Default is False.
 
     Returns
     -------
+    ndarray
+        Resampled y-values at coordinates specified by `new_x`. If an invalid
+        interpolation method is specified, returns None.
 
+    Notes
+    -----
+    - The function uses padding to handle edge effects during interpolation.
+    - When `antialias=True`, a non-causal filter is applied to reduce aliasing
+      artifacts when downsampling.
+    - The `tide_filt` module is used for padding and filtering operations.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.linspace(0, 10, 100)
+    >>> y = np.sin(x)
+    >>> new_x = np.linspace(0, 10, 200)
+    >>> y_resampled = doresample(x, y, new_x, method="cubic")
     """
     tstep = orig_x[1] - orig_x[0]
     if padlen > 0:
@@ -435,11 +688,11 @@ def doresample(
         print("lens:", len(pad_x), len(pad_y))
         print(pad_x)
         print(pad_y)
-        fig = pl.figure()
+        fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.set_title("Original and padded vector")
-        pl.plot(orig_x, orig_y + 1.0, pad_x, pad_y)
-        pl.show()
+        plt.plot(orig_x, orig_y + 1.0, pad_x, pad_y)
+        plt.show()
 
     # antialias and ringstop filter
     init_freq = len(pad_x) / (pad_x[-1] - pad_x[0])
@@ -463,38 +716,81 @@ def doresample(
     elif method == "univariate":
         interpolator = sp.interpolate.UnivariateSpline(pad_x, pad_y, k=3, s=0)  # s=0 interpolates
         # return tide_filt.unpadvec(np.float64(interpolator(new_x)), padlen=padlen)
-        return np.float64(interpolator(new_x))
+        return (interpolator(new_x)).astype(np.float64)
     else:
-        print("invalid interpolation method")
-        return None
+        raise ValueError(f"invalid interpolation method: {method}")
 
 
 def arbresample(
-    inputdata,
-    init_freq,
-    final_freq,
-    intermed_freq=0.0,
-    method="univariate",
-    antialias=True,
-    decimate=False,
-    debug=False,
-):
+    inputdata: NDArray,
+    init_freq: float,
+    final_freq: float,
+    intermed_freq: float = 0.0,
+    method: str = "univariate",
+    antialias: bool = True,
+    decimate: bool = False,
+    debug: bool = False,
+) -> NDArray:
     """
+    Resample input data from an initial frequency to a final frequency using either
+    direct resampling or a two-step process with intermediate frequency.
+
+    This function supports both upsampling and downsampling, with optional anti-aliasing
+    and decimation. It can operate in debug mode to print intermediate steps and
+    statistics.
 
     Parameters
     ----------
-    inputdata
-    init_freq
-    final_freq
-    intermed_freq
-    method
-    antialias
-    decimate
-    debug
+    inputdata : NDArray
+        Input signal or data to be resampled. Should be a 1-D array-like object.
+    init_freq : float
+        Initial sampling frequency of the input data in Hz.
+    final_freq : float
+        Target sampling frequency of the output data in Hz.
+    intermed_freq : float, optional
+        Intermediate sampling frequency used in the two-step resampling process.
+        If not specified (default: 0.0), it is automatically set to the maximum of
+        2 * init_freq and 2 * final_freq.
+    method : str, optional
+        Interpolation method to use for resampling. Default is "univariate".
+        Other options may be supported depending on the underlying implementation.
+    antialias : bool, optional
+        If True (default), apply anti-aliasing filter during downsampling using
+        `scipy.signal.decimate`. If False, use simple interpolation for downsampling.
+    decimate : bool, optional
+        If True, perform upsampling followed by decimation for downsampling.
+        If False, use a two-step resampling approach with `dotwostepresample`.
+        Default is False.
+    debug : bool, optional
+        If True, print debug information including number of points before and after
+        resampling, and intermediate steps. Default is False.
 
     Returns
     -------
+    NDArray
+        Resampled data as a NumPy array with length adjusted according to `final_freq`.
 
+    Notes
+    -----
+    - When `decimate=True`, the function uses integer decimation for efficient downsampling.
+    - For downsampling, if `antialias=False`, the function uses linear interpolation
+      instead of filtering to reduce computational cost.
+    - The `intermed_freq` is automatically calculated when `decimate=True` and
+      `final_freq < init_freq`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> data = np.random.rand(100)
+    >>> resampled = arbresample(data, init_freq=100, final_freq=50, decimate=True)
+    >>> print(len(resampled))
+    50
+
+    See Also
+    --------
+    upsample : Function used for upsampling when `decimate=True`.
+    dotwostepresample : Function used for two-step resampling when `decimate=False`.
+    scipy.signal.decimate : Anti-aliasing filter used when `antialias=True`.
     """
     if debug:
         print("arbresample - initial points:", len(inputdata))
@@ -566,7 +862,62 @@ def arbresample(
         return resampled
 
 
-def upsample(inputdata, Fs_init, Fs_higher, method="univariate", intfac=False, debug=False):
+def upsample(
+    inputdata: NDArray,
+    Fs_init: float,
+    Fs_higher: float,
+    method: str = "univariate",
+    intfac: bool = False,
+    dofilt: bool = True,
+    debug: bool = False,
+) -> NDArray:
+    """
+    Upsample input data to a higher sampling frequency.
+
+    This function increases the sampling rate of the input data using interpolation
+    and optional filtering. It supports different interpolation methods and allows
+    for control over the resampling factor and filtering behavior.
+
+    Parameters
+    ----------
+    inputdata : NDArray
+        Input time series data to be upsampled.
+    Fs_init : float
+        Initial sampling frequency of the input data (Hz).
+    Fs_higher : float
+        Target sampling frequency to upsample to (Hz). Must be greater than `Fs_init`.
+    method : str, optional
+        Interpolation method to use. Default is "univariate". Other options depend
+        on the implementation of `doresample`.
+    intfac : bool, optional
+        If True, use integer resampling factor based on `Fs_higher // Fs_init`.
+        If False, compute resampled points based on time duration. Default is False.
+    dofilt : bool, optional
+        If True, apply a non-causal filter to prevent aliasing. Default is True.
+    debug : bool, optional
+        If True, print timing information. Default is False.
+
+    Returns
+    -------
+    NDArray
+        Upsampled time series data with the new sampling frequency.
+
+    Notes
+    -----
+    - The function uses linear interpolation by default, but the actual method
+      depends on the `doresample` function implementation.
+    - If `dofilt` is True, a trapezoidal non-causal filter is applied with a
+      stop frequency set to the minimum of 1.1 * Fs_init / 2.0 and Fs_higher / 2.0.
+    - The function will terminate if `Fs_higher` is not greater than `Fs_init`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> data = np.sin(np.linspace(0, 4*np.pi, 100))
+    >>> upsampled = upsample(data, Fs_init=10.0, Fs_higher=20.0)
+    >>> print(len(upsampled))
+    200
+    """
     starttime = time.time()
     if Fs_higher <= Fs_init:
         print("upsample: target frequency must be higher than initial frequency")
@@ -575,49 +926,81 @@ def upsample(inputdata, Fs_init, Fs_higher, method="univariate", intfac=False, d
     # upsample
     orig_x = np.linspace(0.0, (1.0 / Fs_init) * len(inputdata), num=len(inputdata), endpoint=False)
     endpoint = orig_x[-1] - orig_x[0]
+    duration = endpoint + (1.0 / Fs_init)
     ts_higher = 1.0 / Fs_higher
-    numresamppts = int(endpoint // ts_higher + 1)
     if intfac:
         numresamppts = int(Fs_higher // Fs_init) * len(inputdata)
     else:
-        numresamppts = int(endpoint // ts_higher + 1)
+        numresamppts = int(np.round(duration / ts_higher))
     upsampled_x = np.arange(0.0, ts_higher * numresamppts, ts_higher)
     upsampled_y = doresample(orig_x, inputdata, upsampled_x, method=method)
-    initfilter = tide_filt.NoncausalFilter(
-        filtertype="arb", transferfunc="trapezoidal", debug=debug
-    )
-    stopfreq = np.min([1.1 * Fs_init / 2.0, Fs_higher / 2.0])
-    initfilter.setfreqs(0.0, 0.0, Fs_init / 2.0, stopfreq)
-    upsampled_y = initfilter.apply(Fs_higher, upsampled_y)
+    if dofilt:
+        initfilter = tide_filt.NoncausalFilter(
+            filtertype="arb", transferfunc="trapezoidal", debug=debug
+        )
+        stopfreq = np.min([1.1 * Fs_init / 2.0, Fs_higher / 2.0])
+        initfilter.setfreqs(0.0, 0.0, Fs_init / 2.0, stopfreq)
+        upsampled_y = initfilter.apply(Fs_higher, upsampled_y)
     if debug:
         print("upsampling took", time.time() - starttime, "seconds")
     return upsampled_y
 
 
 def dotwostepresample(
-    orig_x,
-    orig_y,
-    intermed_freq,
-    final_freq,
-    method="univariate",
-    antialias=True,
-    debug=False,
-):
+    orig_x: NDArray,
+    orig_y: NDArray,
+    intermed_freq: float,
+    final_freq: float,
+    method: str = "univariate",
+    antialias: bool = True,
+    debug: bool = False,
+) -> NDArray:
     """
+    Resample a signal from original frequency to final frequency using a two-step process:
+    first upsampling to an intermediate frequency, then downsampling to the final frequency.
+
+    This function performs resampling by first interpolating the input signal to an
+    intermediate frequency that is higher than the final desired frequency, followed by
+    downsampling to the target frequency. Optional antialiasing filtering is applied
+    during the upsampling step.
 
     Parameters
     ----------
-    orig_x
-    orig_y
-    intermed_freq
-    final_freq
-    method
-    debug
+    orig_x : NDArray
+        Original time axis values (must be monotonically increasing).
+    orig_y : NDArray
+        Original signal values corresponding to `orig_x`.
+    intermed_freq : float
+        Intermediate frequency to which the signal is upsampled.
+        Must be greater than `final_freq`.
+    final_freq : float
+        Target frequency to which the signal is downsampled.
+    method : str, optional
+        Interpolation method used for resampling. Default is "univariate".
+        Should be compatible with the `doresample` function.
+    antialias : bool, optional
+        If True, apply an antialiasing filter during upsampling. Default is True.
+    debug : bool, optional
+        If True, print timing and intermediate information. Default is False.
 
     Returns
     -------
-    resampled_y
+    ndarray
+        Resampled signal values at the final frequency.
 
+    Notes
+    -----
+    - The intermediate frequency must be strictly greater than the final frequency.
+    - The function uses `doresample` for interpolation and `tide_filt.NoncausalFilter`
+      for antialiasing if enabled.
+    - Timing information is printed when `debug=True`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.linspace(0, 10, 100)
+    >>> y = np.sin(x)
+    >>> resampled = dotwostepresample(x, y, intermed_freq=50.0, final_freq=10.0)
     """
     if intermed_freq <= final_freq:
         print("intermediate frequency must be higher than final frequency")
@@ -626,9 +1009,10 @@ def dotwostepresample(
     # upsample
     starttime = time.time()
     endpoint = orig_x[-1] - orig_x[0]
+    duration = endpoint + (orig_x[1] - orig_x[0])
     init_freq = len(orig_x) / endpoint
     intermed_ts = 1.0 / intermed_freq
-    numresamppts = int(endpoint // intermed_ts + 1)
+    numresamppts = int(np.round(duration / intermed_ts))
     intermed_x = intermed_ts * np.linspace(0.0, 1.0 * numresamppts, numresamppts, endpoint=False)
     intermed_y = doresample(orig_x, orig_y, intermed_x, method=method)
     if debug:
@@ -658,7 +1042,7 @@ def dotwostepresample(
     # downsample
     starttime = time.time()
     final_ts = 1.0 / final_freq
-    numresamppts = int(np.ceil(endpoint / final_ts))
+    numresamppts = int(np.round(duration / final_ts))
     # final_x = np.arange(0.0, final_ts * numresamppts, final_ts)
     final_x = final_ts * np.linspace(0.0, 1.0 * numresamppts, numresamppts, endpoint=False)
     resampled_y = doresample(intermed_x, antialias_y, final_x, method=method)
@@ -667,20 +1051,56 @@ def dotwostepresample(
     return resampled_y
 
 
-def calcsliceoffset(sotype, slicenum, numslices, tr, multiband=1):
+def calcsliceoffset(
+    sotype: int, slicenum: int, numslices: int, tr: float, multiband: int = 1
+) -> float:
     """
+    Calculate slice timing offset for slice timing correction.
+
+    This function computes the timing offset (in seconds) for a given slice
+    based on the slice timing correction method specified by `sotype`. The
+    offset is used to align slice acquisition times for functional MRI data
+    preprocessing.
 
     Parameters
     ----------
-    sotype
-    slicenum
-    numslices
-    tr
-    multiband
+    sotype : int
+        Slice timing correction method:
+        - 0: None
+        - 1: Regular up (0, 1, 2, 3, ...)
+        - 2: Regular down
+        - 3: Use slice order file (not supported)
+        - 4: Use slice timings file (not supported)
+        - 5: Standard interleaved (0, 2, 4, ..., 1, 3, 5, ...)
+        - 6: Siemens interleaved
+        - 7: Siemens multiband interleaved
+    slicenum : int
+        The index of the slice for which to compute the timing offset.
+    numslices : int
+        Total number of slices in the volume.
+    tr : float
+        Repetition time (TR) in seconds.
+    multiband : int, optional
+        Multiband factor (default is 1). Used only for sotype 7 (Siemens
+        multiband interleaved).
 
     Returns
     -------
+    float
+        Slice timing offset in seconds.
 
+    Notes
+    -----
+    For sotypes 3 and 4, the function returns 0.0 as these methods are not
+    implemented.
+
+    Examples
+    --------
+    >>> calcsliceoffset(1, 5, 32, 2.0)
+    0.3125
+
+    >>> calcsliceoffset(5, 3, 16, 1.5)
+    0.28125
     """
     # Slice timing correction
     # 0 : None
@@ -771,19 +1191,61 @@ def calcsliceoffset(sotype, slicenum, numslices, tr, multiband=1):
 
 # NB: a positive value of shifttrs delays the signal, a negative value advances it
 # timeshift using fourier phase multiplication
-def timeshift(inputtc, shifttrs, padtrs, doplot=False, debug=False):
+def timeshift(
+    inputtc: ArrayLike, shifttrs: float, padtrs: int, doplot: bool = False, debug: bool = False
+) -> Tuple[NDArray, NDArray, NDArray, NDArray]:
     """
+    Apply a time shift to a signal using FFT-based modulation and padding.
+
+    This function performs a time shift on an input time course by applying
+    phase modulation in the frequency domain, followed by inverse FFT. It uses
+    padding and reflection to avoid edge discontinuities. The function also
+    returns the corresponding shifted weights and the full padded results.
 
     Parameters
     ----------
-    inputtc
-    shifttrs
-    padtrs
-    doplot
+    inputtc : array-like
+        Input time course to be shifted. Should be a 1D array of real values.
+    shifttrs : float
+        Time shift in units of samples. Positive values shift the signal forward,
+        negative values shift it backward.
+    padtrs : int
+        Number of samples to pad the input signal on each side before shifting.
+        This helps reduce edge effects.
+    doplot : bool, optional
+        If True, plots the original and shifted signals. Default is False.
+    debug : bool, optional
+        If True, prints debug information during execution. Default is False.
 
     Returns
     -------
+    tuple of ndarray
+        A tuple containing:
+        - shifted_y : ndarray
+            The time-shifted signal, cropped to the original length.
+        - shifted_weights : ndarray
+            The corresponding shifted weights, cropped to the original length.
+        - shifted_y_full : ndarray
+            The full time-shifted signal including padding.
+        - shifted_weights_full : ndarray
+            The full shifted weights including padding.
 
+    Notes
+    -----
+    The function uses reflection padding to minimize edge artifacts. The phase
+    modulation is applied in the frequency domain using FFT and inverse FFT.
+    The shift is implemented as a complex exponential modulation.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy import fft
+    >>> input_signal = np.sin(np.linspace(0, 4*np.pi, 100))
+    >>> shifted_sig, weights, full_shifted, full_weights = timeshift(
+    ...     input_signal, shifttrs=5.0, padtrs=10, doplot=False
+    ... )
+    >>> print(shifted_sig.shape)
+    (100,)
     """
     # set up useful parameters
     thelen = np.shape(inputtc)[0]
@@ -816,12 +1278,12 @@ def timeshift(inputtc, shifttrs, padtrs, doplot=False, debug=False):
     modvec = np.cos(argvec) - imag * np.sin(argvec)
 
     # process the data (fft->modulate->ifft->filter)
-    fftdata = fftpack.fft(preshifted_y)  # do the actual shifting
-    shifted_y = fftpack.ifft(modvec * fftdata).real
+    fftdata = fft.fft(preshifted_y)  # do the actual shifting
+    shifted_y = fft.ifft(modvec * fftdata).real
 
     # process the weights
-    w_fftdata = fftpack.fft(weights)  # do the actual shifting
-    shifted_weights = fftpack.ifft(modvec * w_fftdata).real
+    w_fftdata = fft.fft(weights)  # do the actual shifting
+    shifted_weights = fft.ifft(modvec * w_fftdata).real
 
     if doplot:
         xvec = range(0, thepaddedlen)  # make a ramp vector (with pad)
@@ -830,36 +1292,87 @@ def timeshift(inputtc, shifttrs, padtrs, doplot=False, debug=False):
         print("thelen:", thelen)
         print("thepaddedlen:", thepaddedlen)
 
-        fig = pl.figure()
+        fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.set_title("Initial vector")
-        pl.plot(xvec, preshifted_y)
+        plt.plot(xvec, preshifted_y)
 
-        fig = pl.figure()
+        fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.set_title("Initial and shifted vector")
-        pl.plot(xvec, preshifted_y, xvec, shifted_y)
+        plt.plot(xvec, preshifted_y, xvec, shifted_y)
 
-        pl.show()
+        plt.show()
 
-    return [
+    return (
         shifted_y[padtrs : padtrs + thelen],
         shifted_weights[padtrs : padtrs + thelen],
         shifted_y,
         shifted_weights,
-    ]
+    )
 
 
-def timewarp(orig_x, orig_y, timeoffset, demean=True, method="univariate", debug=False):
+def timewarp(
+    orig_x: NDArray,
+    orig_y: NDArray,
+    timeoffset: NDArray,
+    demean: bool = True,
+    method: str = "univariate",
+    debug: bool = False,
+) -> NDArray:
+    """
+    Apply time warping to align time series data based on time offsets.
+
+    This function performs time warping by resampling input data according to
+    provided time offsets. It can optionally remove the mean of the time offsets
+    before resampling to center the data around zero.
+
+    Parameters
+    ----------
+    orig_x : NDArray
+        Original time axis values (x-coordinates) for the data to be warped.
+    orig_y : NDArray
+        Original signal values (y-coordinates) corresponding to orig_x.
+    timeoffset : NDArray
+        Time offsets to be applied to each point in the time axis. Positive values
+        shift data forward in time, negative values shift backward.
+    demean : bool, optional
+        If True, remove the mean of timeoffset before resampling. Default is True.
+    method : str, optional
+        Resampling method to use. Options are 'univariate' or other methods
+        supported by the underlying doresample function. Default is 'univariate'.
+    debug : bool, optional
+        If True, print debugging information about the warping process.
+        Default is False.
+
+    Returns
+    -------
+    NDArray
+        Warped time series data after applying the time offsets and resampling.
+
+    Notes
+    -----
+    The function calculates the maximum deviation in samples and uses half the
+    length of the input data (or 30 seconds worth of samples, whichever is smaller)
+    as padding length for the resampling operation.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.linspace(0, 10, 100)
+    >>> y = np.sin(x)
+    >>> offsets = np.random.normal(0, 0.1, 100)
+    >>> warped_y = timewarp(x, y, offsets)
+    """
     if demean:
         demeanedoffset = timeoffset - np.mean(timeoffset)
         if debug:
             print("mean delay of ", np.mean(timeoffset), "seconds removed prior to resampling")
     else:
         demeanedoffset = timeoffset
-    sampletime = orig_x[1] - orig_x[0]
-    maxdevs = (np.min(demeanedoffset), np.max(demeanedoffset))
-    maxsamps = maxdevs / sampletime
+    sampletime = float(orig_x[1] - orig_x[0])
+    maxdevs = (float(np.min(demeanedoffset)), float(np.max(demeanedoffset)))
+    maxsamps = (maxdevs[0] / sampletime, maxdevs[1] / sampletime)
     padlen = np.min([int(len(orig_x) // 2), int(30.0 / sampletime)])
     if debug:
         print("maximum deviation in samples:", maxsamps)

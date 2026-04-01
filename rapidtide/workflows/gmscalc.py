@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -20,8 +20,11 @@ import argparse
 import platform
 import sys
 import time
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 import rapidtide.filter as tide_filt
 import rapidtide.io as tide_io
@@ -30,7 +33,33 @@ import rapidtide.util as tide_util
 import rapidtide.workflows.parser_funcs as pf
 
 
-def _get_parser():
+def _get_parser() -> Any:
+    """
+    Construct and return an argument parser for the gmscalc tool.
+
+    This function sets up an `argparse.ArgumentParser` with required and optional
+    arguments needed to run the global mean signal calculation and filtering
+    pipeline. It includes support for specifying input data, output root, data mask,
+    normalization options, smoothing, and debugging.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser with all required and optional arguments
+        for the gmscalc tool.
+
+    Notes
+    -----
+    The parser is configured with `allow_abbrev=False` to enforce full argument
+    names and avoid ambiguity.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['data.nii', 'output_root'])
+    >>> print(args.datafile)
+    'data.nii'
+    """
     parser = argparse.ArgumentParser(
         prog="gmscalc",
         description="Calculate the global mean signal, and filtered versions",
@@ -86,7 +115,54 @@ def _get_parser():
     return parser
 
 
-def makdcommandlinelist(arglist, starttime, endtime, extra=None):
+def makecommandlinelist(
+    arglist: Any, starttime: Any, endtime: Any, extra: Optional[Any] = None
+) -> None:
+    """
+    Create a list of command line information for logging purposes.
+
+    This function generates a list of descriptive strings containing processing
+    information including date, duration, version details, and the actual command
+    that was executed.
+
+    Parameters
+    ----------
+    arglist : Any
+        List of command line arguments to be joined into a command string.
+    starttime : Any
+        Start time of the process, typically a timestamp.
+    endtime : Any
+        End time of the process, typically a timestamp.
+    extra : Any, optional
+        Additional descriptive text to include in the output list. Default is None.
+
+    Returns
+    -------
+    list of str
+        List containing the following elements in order:
+        - Processing date and time
+        - Processing duration
+        - Node and version information
+        - Extra information (if provided)
+        - The actual command line string
+
+    Notes
+    -----
+    The function uses `time.strftime` to format the start time and `tide_util.version()`
+    to retrieve version information. The command line is constructed by joining
+    the `arglist` elements with spaces.
+
+    Examples
+    --------
+    >>> import time
+    >>> args = ['python', 'script.py', '--input', 'data.txt']
+    >>> start = time.time()
+    >>> # ... some processing ...
+    >>> end = time.time()
+    >>> info = makecommandlinelist(args, start, end)
+    >>> print(info[0])
+    '# Processed on Mon, 01 Jan 2024 12:00:00 UTC.'
+    """
     # get the processing date
     dateline = (
         "# Processed on "
@@ -123,7 +199,41 @@ def makdcommandlinelist(arglist, starttime, endtime, extra=None):
         return [dateline, timeline, nodeline, commandline]
 
 
-def gmscalc_main():
+def gmscalc_main() -> None:
+    """
+    Main function to calculate global mean signal (GMS) from fMRI data.
+
+    This function reads NIfTI-formatted fMRI data, applies optional smoothing,
+    masks the data if a mask is provided, and computes the global mean signal
+    across valid voxels. It then applies low-frequency (LFO) and high-frequency
+    (HF) filtering to the global signal and writes the results to text files.
+
+    The function uses the `tide_io` module for reading and writing data, and
+    `tide_filt` and `tide_math` for filtering and normalization.
+
+    Notes
+    -----
+    The function expects a command-line interface to be set up with `_get_parser()`
+    and uses `sys.argv` to parse arguments. It prints diagnostic information
+    during execution.
+
+    Examples
+    --------
+    Assuming the script is called as `gmscalc_main.py` and properly configured:
+
+    >>> gmscalc_main()
+
+    This will read the input data, perform processing, and write output files
+    with names based on the `outputroot` argument.
+
+    See Also
+    --------
+    tide_io.readfromnifti : Reads NIfTI files.
+    tide_io.writevec : Writes vectors to text files.
+    tide_filt.ssmooth : Applies spatial smoothing.
+    tide_filt.NoncausalFilter : Applies non-causal filtering.
+    tide_math.normalize : Normalizes a signal.
+    """
     try:
         args = _get_parser().parse_args()
     except SystemExit:
@@ -146,15 +256,7 @@ def gmscalc_main():
     xdim, ydim, slicethickness, tr = tide_io.parseniftisizes(thesizes)
     print(f"Datafile shape is {datafile_data.shape}")
 
-    # smooth the data
-    if args.sigma > 0.0:
-        print("smoothing data")
-        for i in range(timepoints):
-            datafile_data[:, :, :, i] = tide_filt.ssmooth(
-                xdim, ydim, slicethickness, args.sigma, datafile_data[:, :, :, i]
-            )
-        print("done smoothing data")
-
+    # read in the mask
     if args.datamaskname is not None:
         print("reading in mask array")
         (
@@ -169,7 +271,16 @@ def gmscalc_main():
             sys.exit()
         print("done reading in mask array")
     else:
-        datamask_data = datafile_data[:, :, :, 0] * 0.0 + 1.0
+        datamask_data = np.ones_like(datafile_data[:, :, :, 0])
+
+    # smooth the data
+    if args.sigma > 0.0:
+        print("smoothing data")
+        for i in range(timepoints):
+            datafile_data[:, :, :, i] = tide_filt.ssmooth(
+                xdim, ydim, slicethickness, args.sigma, datafile_data[:, :, :, i]
+            )
+        print("done smoothing data")
 
     # now reformat from x, y, z, time to voxelnumber, measurement, subject
     numvoxels = int(xsize) * int(ysize) * int(numslices)
@@ -201,5 +312,5 @@ def gmscalc_main():
     tide_io.writevec(gms_lfo, args.outputroot + "_gmslfo.txt")
     tide_io.writevec(gms_hf, args.outputroot + "_gmshf.txt")
     runendtime = time.time()
-    thecommandfilelines = makdcommandlinelist(sys.argv, runstarttime, runendtime)
+    thecommandfilelines = makecommandlinelist(sys.argv, runstarttime, runendtime)
     tide_io.writevec(thecommandfilelines, args.outputroot + "_commandline.txt")

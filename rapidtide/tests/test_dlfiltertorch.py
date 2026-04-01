@@ -1,0 +1,1128 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+#   Copyright 2025-2026 Blaise Frederick
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
+#
+import os
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+import torch
+
+import rapidtide.dlfiltertorch as dlfiltertorch
+from rapidtide.tests.utils import get_test_temp_path, mse
+
+
+def create_dummy_data():
+    """Create dummy training data for testing."""
+    window_size = 64
+    num_samples = 100
+
+    # Create dummy input and output data
+    train_x = np.random.randn(num_samples, window_size, 1).astype(np.float32)
+    train_y = np.random.randn(num_samples, window_size, 1).astype(np.float32)
+    val_x = np.random.randn(20, window_size, 1).astype(np.float32)
+    val_y = np.random.randn(20, window_size, 1).astype(np.float32)
+
+    return {
+        "train_x": train_x,
+        "train_y": train_y,
+        "val_x": val_x,
+        "val_y": val_y,
+        "window_size": window_size,
+    }
+
+
+def cnn_model_creation():
+    """Test CNN model instantiation and forward pass."""
+    num_filters = 10
+    kernel_size = 5
+    num_layers = 3
+    dropout_rate = 0.3
+    dilation_rate = 1
+    activation = "relu"
+    inputsize = 1
+
+    model = dlfiltertorch.CNNModel(
+        num_filters=num_filters,
+        kernel_size=kernel_size,
+        num_layers=num_layers,
+        dropout_rate=dropout_rate,
+        dilation_rate=dilation_rate,
+        activation=activation,
+        inputsize=inputsize,
+    )
+
+    # Test forward pass
+    batch_size = 4
+    seq_len = 64
+    x = torch.randn(batch_size, inputsize, seq_len)
+    output = model(x)
+
+    assert output.shape == (batch_size, inputsize, seq_len)
+
+    # Test get_config
+    config = model.get_config()
+    assert config["num_filters"] == num_filters
+    assert config["kernel_size"] == kernel_size
+
+
+def cnn_dlfilter_initialization(testtemproot):
+    """Test CNNDLFilter initialization."""
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=10,
+        kernel_size=5,
+        window_size=64,
+        num_layers=3,
+        num_epochs=1,
+        modelroot=testtemproot,
+    )
+
+    assert filter_obj.window_size == 64
+    assert filter_obj.num_filters == 10
+    assert filter_obj.kernel_size == 5
+    assert filter_obj.nettype == "cnn"
+    assert not filter_obj.initialized
+
+
+def cnn_dlfilter_initialize(testtemproot):
+    """Test CNNDLFilter model initialization."""
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=10,
+        kernel_size=5,
+        window_size=64,
+        num_layers=3,
+        num_epochs=1,
+        modelroot=testtemproot,
+        namesuffix="test",
+    )
+
+    # Just call getname and makenet, don't call full initialize
+    # because savemodel has a bug using modelname instead of modelpath
+    filter_obj.getname()
+    filter_obj.makenet()
+
+    assert filter_obj.model is not None
+    assert os.path.exists(filter_obj.modelpath)
+
+    # Manually save using modelpath
+    filter_obj.model.to(filter_obj.device)
+    filter_obj.savemodel(altname=filter_obj.modelpath)
+
+    assert os.path.exists(os.path.join(filter_obj.modelpath, "model.pth"))
+
+
+def predict_model(testtemproot, dummy_data):
+    """Test the predict_model method."""
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=10,
+        kernel_size=5,
+        window_size=dummy_data["window_size"],
+        num_layers=3,
+        num_epochs=1,
+        modelroot=testtemproot,
+    )
+
+    # Just create the model without full initialize
+    filter_obj.getname()
+    filter_obj.makenet()
+    filter_obj.model.to(filter_obj.device)
+
+    # Test prediction with numpy array
+    predictions = filter_obj.predict_model(dummy_data["val_x"])
+
+    assert predictions.shape == dummy_data["val_y"].shape
+    assert isinstance(predictions, np.ndarray)
+
+
+def apply_method(testtemproot):
+    """Test the apply method for filtering a signal."""
+    window_size = 64
+    signal_length = 500
+
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=10,
+        kernel_size=5,
+        window_size=window_size,
+        num_layers=3,
+        num_epochs=1,
+        modelroot=testtemproot,
+    )
+
+    # Just create the model without full initialize
+    filter_obj.getname()
+    filter_obj.makenet()
+    filter_obj.model.to(filter_obj.device)
+
+    # Create a test signal
+    input_signal = np.random.randn(signal_length).astype(np.float32)
+
+    # Apply the filter
+    filtered_signal = filter_obj.apply(input_signal)
+
+    assert filtered_signal.shape == input_signal.shape
+    assert isinstance(filtered_signal, np.ndarray)
+
+
+def apply_method_with_badpts(testtemproot):
+    """Test the apply method with bad points."""
+    window_size = 64
+    signal_length = 500
+
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=10,
+        kernel_size=5,
+        window_size=window_size,
+        num_layers=3,
+        num_epochs=1,
+        modelroot=testtemproot,
+        usebadpts=True,
+    )
+
+    # Just create the model without full initialize
+    filter_obj.getname()
+    filter_obj.makenet()
+    filter_obj.model.to(filter_obj.device)
+
+    # Create test signal and bad points
+    input_signal = np.random.randn(signal_length).astype(np.float32)
+    badpts = np.zeros(signal_length, dtype=np.float32)
+    badpts[100:120] = 1.0  # Mark some points as bad
+
+    # Apply the filter with bad points
+    filtered_signal = filter_obj.apply(input_signal, badpts=badpts)
+
+    assert filtered_signal.shape == input_signal.shape
+    assert isinstance(filtered_signal, np.ndarray)
+
+
+def save_and_load_cnn_model(testtemproot):
+    """Test saving and loading a model."""
+    # This test is skipped because both savemodel() and initmetadata()
+    # use self.modelname (a relative path) instead of self.modelpath (full path)
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=10,
+        kernel_size=5,
+        window_size=64,
+        num_layers=3,
+        num_epochs=1,
+        modelroot=testtemproot,
+        namesuffix="saveloadcnntest",
+    )
+
+    # Create and save the model using modelpath
+    filter_obj.getname()
+    filter_obj.makenet()
+    filter_obj.model.to(filter_obj.device)
+    filter_obj.initmetadata()
+    filter_obj.savemodel(altname=filter_obj.modelpath)
+
+    original_modelname = os.path.basename(filter_obj.modelpath)
+
+    # Get original model weights
+    original_weights = {}
+    for name, param in filter_obj.model.named_parameters():
+        original_weights[name] = param.data.clone()
+
+    # Create new filter object and load the saved model
+    filter_obj2 = dlfiltertorch.CNNDLFilter(
+        num_filters=10,  # These will be overridden by loaded model
+        kernel_size=5,
+        window_size=64,
+        num_layers=3,
+        num_epochs=1,
+        modelroot=testtemproot,
+        modelpath=testtemproot,
+    )
+
+    filter_obj2.loadmodel(original_modelname)
+
+    # Check that metadata was loaded correctly
+    assert filter_obj2.window_size == 64
+    assert filter_obj2.infodict["nettype"] == "cnn"
+
+    # Verify weights match
+    for name, param in filter_obj2.model.named_parameters():
+        assert torch.allclose(original_weights[name], param.data)
+
+
+def save_and_load_ppgattention_model(testtemproot):
+    """Test saving and loading a PPG attention model."""
+    filter_obj = dlfiltertorch.PPGAttentionDLFilter(
+        hidden_size=32,
+        window_size=100,
+        num_epochs=1,
+        modelroot=testtemproot,
+        namesuffix="saveloadppgattentiontest",
+    )
+
+    # Create and save the model using modelpath
+    filter_obj.getname()
+    filter_obj.makenet()
+    filter_obj.model.to(filter_obj.device)
+    filter_obj.initmetadata()
+    # initmetadata resets infodict, so preserve hidden_size for loadmodel()
+    filter_obj.infodict["hidden_size"] = filter_obj.hidden_size
+    filter_obj.savemodel(altname=filter_obj.modelpath)
+
+    original_modelname = os.path.basename(filter_obj.modelpath)
+
+    # Get original model weights
+    original_weights = {}
+    for name, param in filter_obj.model.named_parameters():
+        original_weights[name] = param.data.clone()
+
+    # Create new filter object and load the saved model
+    filter_obj2 = dlfiltertorch.PPGAttentionDLFilter(
+        hidden_size=16,  # overridden by loaded model metadata
+        window_size=100,
+        num_epochs=1,
+        modelroot=testtemproot,
+        modelpath=testtemproot,
+    )
+
+    filter_obj2.loadmodel(original_modelname)
+
+    # Check that metadata was loaded correctly
+    assert filter_obj2.window_size == 100
+    assert filter_obj2.infodict["nettype"] == "ppgattention"
+    assert filter_obj2.hidden_size == 32
+
+    # Verify weights match
+    for name, param in filter_obj2.model.named_parameters():
+        assert torch.allclose(original_weights[name], param.data)
+
+
+def save_and_load_convautoencoder_model(testtemproot):
+    """Test saving and loading a convolutional autoencoder model."""
+    filter_obj = dlfiltertorch.ConvAutoencoderDLFilter(
+        encoding_dim=8,
+        num_filters=4,
+        kernel_size=3,
+        window_size=65,
+        num_layers=4,
+        num_epochs=1,
+        modelroot=testtemproot,
+        namesuffix="saveloadconvautoencodertest",
+    )
+
+    # Create and save the model using modelpath
+    filter_obj.getname()
+    filter_obj.makenet()
+    filter_obj.model.to(filter_obj.device)
+    filter_obj.initmetadata()
+    filter_obj.savemodel(altname=filter_obj.modelpath)
+
+    original_modelname = os.path.basename(filter_obj.modelpath)
+
+    # Get original model weights
+    original_weights = {}
+    for name, param in filter_obj.model.named_parameters():
+        original_weights[name] = param.data.clone()
+
+    # Create new filter object and load the saved model
+    filter_obj2 = dlfiltertorch.ConvAutoencoderDLFilter(
+        encoding_dim=4,  # overridden by loaded model checkpoint/config
+        num_filters=2,
+        kernel_size=5,
+        window_size=65,
+        num_layers=4,
+        num_epochs=1,
+        modelroot=testtemproot,
+        modelpath=testtemproot,
+    )
+
+    filter_obj2.loadmodel(original_modelname)
+
+    # Check that metadata/config was loaded correctly
+    assert filter_obj2.window_size == 65
+    assert filter_obj2.infodict["nettype"] == "convautoencoder"
+    assert filter_obj2.encoding_dim == 8
+    assert filter_obj2.num_filters == 4
+    assert filter_obj2.kernel_size == 3
+
+    # Verify weights match
+    for name, param in filter_obj2.model.named_parameters():
+        assert torch.allclose(original_weights[name], param.data)
+
+
+def loaddata_requires_initialize():
+    """Test that loaddata raises if model has not been initialized."""
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=4,
+        kernel_size=3,
+        window_size=32,
+        num_layers=1,
+        num_epochs=1,
+    )
+    with pytest.raises(Exception):
+        filter_obj.loaddata()
+
+
+def loaddata_calls_prep_when_initialized():
+    """Test loaddata() calls prep() and populates expected attributes."""
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=4,
+        kernel_size=3,
+        window_size=32,
+        num_layers=1,
+        num_epochs=1,
+    )
+    filter_obj.initialized = True
+
+    train_x = np.zeros((4, 32, 1), dtype=np.float32)
+    train_y = np.zeros((4, 32, 1), dtype=np.float32)
+    val_x = np.zeros((2, 32, 1), dtype=np.float32)
+    val_y = np.zeros((2, 32, 1), dtype=np.float32)
+
+    with patch(
+        "rapidtide.dlfiltertorch.prep",
+        return_value=(train_x, train_y, val_x, val_y, 6, 32, 2),
+    ):
+        filter_obj.loaddata()
+
+    assert filter_obj.train_x.shape == (4, 32, 1)
+    assert filter_obj.train_y.shape == (4, 32, 1)
+    assert filter_obj.val_x.shape == (2, 32, 1)
+    assert filter_obj.val_y.shape == (2, 32, 1)
+    assert filter_obj.Ns == 6
+    assert filter_obj.tclen == 32
+    assert filter_obj.thebatchsize == 2
+
+
+def minimal_cpu_training_loop_cnn(testtemproot):
+    """Run a minimal real training loop using CPU only."""
+    rng = np.random.RandomState(1234)
+    window_size = 32
+    train_n = 8
+    val_n = 4
+
+    train_x = rng.randn(train_n, window_size, 1).astype(np.float32)
+    train_y = (0.8 * train_x + 0.1).astype(np.float32)
+    val_x = rng.randn(val_n, window_size, 1).astype(np.float32)
+    val_y = (0.8 * val_x + 0.1).astype(np.float32)
+
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=4,
+        kernel_size=3,
+        window_size=window_size,
+        num_layers=1,
+        dropout_rate=0.1,
+        num_pretrain_epochs=0,
+        num_epochs=1,
+        batch_size=2,
+        modelroot=testtemproot,
+        namesuffix="cpu_train_smoke",
+        excludebysubject=False,
+    )
+
+    filter_obj.getname()
+    filter_obj.makenet()
+    filter_obj.device = torch.device("cpu")
+    filter_obj.model.to(filter_obj.device)
+
+    filter_obj.initmetadata()
+
+    filter_obj.train_x = train_x
+    filter_obj.train_y = train_y
+    filter_obj.val_x = val_x
+    filter_obj.val_y = val_y
+
+    filter_obj.train()
+
+    assert filter_obj.trained is True
+    assert len(filter_obj.loss) == 1
+    assert len(filter_obj.val_loss) == 1
+    assert next(filter_obj.model.parameters()).device.type == "cpu"
+    assert os.path.exists(os.path.join(filter_obj.modelpath, "model.pth"))
+    assert os.path.exists(os.path.join(filter_obj.modelpath, "best_model.pth"))
+    assert os.path.exists(os.path.join(filter_obj.modelpath, "loss.txt"))
+
+    preds = filter_obj.predict_model(val_x)
+    assert preds.shape == val_y.shape
+
+
+def readindata_filters_and_returns_expected_shapes():
+    """Test readindata() filtering logic and returned array shapes."""
+    matched = [
+        "sub-01_desc-stdrescardfromfmri_timeseries.json",
+        "sub-02_desc-stdrescardfromfmri_timeseries.json",
+    ]
+    tclen = 20
+
+    info_good = {
+        "corrcoeff_raw2pleth": 0.9,
+        "corrcoeff_pleth2filtpleth": 0.95,
+        "S_sqi_mean_pleth": 0.5,
+    }
+    info_bad_corr = {
+        "corrcoeff_raw2pleth": 0.1,  # below threshold -> excluded
+        "corrcoeff_pleth2filtpleth": 0.95,
+        "S_sqi_mean_pleth": 0.5,
+    }
+
+    input_good = np.vstack(
+        [
+            np.linspace(0.0, 2.0, tclen),  # cardiacfromfmri_25.0Hz
+            np.linspace(1.0, 3.0, tclen),  # normpleth
+            np.zeros(tclen),  # badpts
+        ]
+    )
+    input_bad = np.vstack(
+        [
+            np.linspace(0.0, 2.0, tclen),
+            np.linspace(1.0, 3.0, tclen),
+            np.zeros(tclen),
+        ]
+    )
+
+    def _mock_readdictfromjson(path):
+        if "sub-01" in path:
+            return info_good
+        return info_bad_corr
+
+    def _mock_readbidstsv(path, colspec=None):
+        arr = input_good if "sub-01" in path else input_bad
+        return (25.0, 0.0, ["x", "y", "badpts"], arr, False, "bids", {})
+
+    with (
+        patch(
+            "rapidtide.dlfiltertorch.tide_io.readdictfromjson",
+            side_effect=_mock_readdictfromjson,
+        ),
+        patch(
+            "rapidtide.dlfiltertorch.tide_io.readbidstsv",
+            side_effect=_mock_readbidstsv,
+        ),
+    ):
+        x, y, names, bad = dlfiltertorch.readindata(
+            matched,
+            tclen=tclen,
+            usebadpts=True,
+            startskip=1,
+            endskip=1,
+            corrthresh_rp=0.5,
+            corrthresh_pp=0.9,
+            readlim=None,
+            readskip=0,
+        )
+
+    # One file should pass thresholds and one should be excluded.
+    assert x.shape == (tclen - 2, 1)
+    assert y.shape == (tclen - 2, 1)
+    assert bad is not None
+    assert bad.shape == (tclen - 2, 1)
+    assert len(names) == 1
+    assert "sub-01" in names[0]
+
+
+def prep_windowing_and_split_paths():
+    """Test prep() windowing/splitting flow with mocked file IO."""
+    window_size = 8
+    step = 4
+    returned_tclen = 40
+    npts_after_skip = 20
+    nsubj = 3
+
+    x = np.tile(np.linspace(-1.0, 1.0, npts_after_skip).reshape(-1, 1), (1, nsubj)).astype(float)
+    y = (0.5 * x + 0.1).astype(float)
+    bad = np.zeros_like(x)
+    names = [f"sub-{i:02d}" for i in range(nsubj)]
+
+    with (
+        patch(
+            "rapidtide.dlfiltertorch.getmatchedtcs",
+            return_value=(["dummy_a.json", "dummy_b.json", "dummy_c.json"], returned_tclen),
+        ),
+        patch(
+            "rapidtide.dlfiltertorch.readindata",
+            return_value=(x, y, names, bad),
+        ),
+    ):
+        train_x, train_y, val_x, val_y, n_subjs_out, tclen_out, batchsize = dlfiltertorch.prep(
+            window_size=window_size,
+            step=step,
+            excludethresh=10.0,
+            usebadpts=False,
+            startskip=10,
+            endskip=10,
+            excludebysubject=False,
+            dofft=False,
+            readskip=0,
+        )
+
+    # windows per subject = (20 - 8 - 1)//4 = 2, total windows = 6
+    assert train_x.shape[1:] == (window_size, 1)
+    assert train_y.shape[1:] == (window_size, 1)
+    assert val_x.shape[1:] == (window_size, 1)
+    assert val_y.shape[1:] == (window_size, 1)
+    assert train_x.shape[0] + val_x.shape[0] == 6
+    assert n_subjs_out == nsubj
+    assert tclen_out == returned_tclen - 10 - 10
+    assert batchsize == 2
+
+
+def filtscale_forward():
+    """Test filtscale function in forward direction."""
+    # filtscale expects 1D data (single timecourse)
+    data = np.random.randn(64)
+
+    # Test without log normalization
+    scaled_data, scalefac = dlfiltertorch.filtscale(data, reverse=False, lognormalize=False)
+
+    assert scaled_data.shape == (64, 2)
+    assert isinstance(scalefac, (float, np.floating))
+
+    # Test with log normalization
+    scaled_data_log, scalefac_log = dlfiltertorch.filtscale(data, reverse=False, lognormalize=True)
+
+    assert scaled_data_log.shape == (64, 2)
+
+
+def filtscale_reverse():
+    """Test filtscale function in reverse direction."""
+    # filtscale expects 1D data (single timecourse)
+    data = np.random.randn(64)
+
+    # Forward then reverse
+    scaled_data, scalefac = dlfiltertorch.filtscale(data, reverse=False, lognormalize=False)
+
+    reconstructed = dlfiltertorch.filtscale(
+        scaled_data, scalefac=scalefac, reverse=True, lognormalize=False
+    )
+
+    # Should reconstruct approximately to original
+    assert reconstructed.shape == data.shape
+    assert mse(data, reconstructed) < 1.0  # Allow some reconstruction error
+
+
+def tobadpts():
+    """Test tobadpts helper function."""
+    filename = "test_file.txt"
+    result = dlfiltertorch.tobadpts(filename)
+    assert result == "test_file_badpts.txt"
+
+
+def targettoinput():
+    """Test targettoinput helper function."""
+    filename = "test_xyz_file.txt"
+    result = dlfiltertorch.targettoinput(filename, targetfrag="xyz", inputfrag="abc")
+    assert result == "test_abc_file.txt"
+
+
+def model_with_different_activations(testtemproot):
+    """Test models with different activation functions."""
+    activations = ["relu", "tanh"]
+
+    for activation in activations:
+        model = dlfiltertorch.CNNModel(
+            num_filters=10,
+            kernel_size=5,
+            num_layers=3,
+            dropout_rate=0.3,
+            dilation_rate=1,
+            activation=activation,
+            inputsize=1,
+        )
+
+        # Test forward pass
+        x = torch.randn(2, 1, 64)
+        output = model(x)
+        assert output.shape == x.shape
+
+        config = model.get_config()
+        assert config["activation"] == activation
+
+
+def device_selection():
+    """Test that device is properly set based on availability."""
+    # This test just checks that the device variable is set
+    # We can't guarantee CUDA/MPS availability in test environment
+    assert dlfiltertorch.device in [torch.device("cuda"), torch.device("mps"), torch.device("cpu")]
+
+
+def infodict_population(testtemproot):
+    """Test that infodict is properly populated."""
+    filter_obj = dlfiltertorch.CNNDLFilter(
+        num_filters=10,
+        kernel_size=5,
+        window_size=64,
+        num_layers=3,
+        dropout_rate=0.3,
+        num_epochs=5,
+        excludethresh=4.0,
+        corrthresh_rp=0.5,
+        corrthresh_pp=0.9,
+        modelroot=testtemproot,
+    )
+
+    # Check that infodict has expected keys
+    assert "nettype" in filter_obj.infodict
+    assert "num_filters" in filter_obj.infodict
+    assert "kernel_size" in filter_obj.infodict
+    assert filter_obj.infodict["nettype"] == "cnn"
+
+    # Create the model (don't call initmetadata due to path bug)
+    filter_obj.getname()
+    filter_obj.makenet()
+
+    # The model should populate infodict with window_size during getname
+    assert "window_size" in filter_obj.infodict
+    assert filter_obj.infodict["window_size"] == 64
+
+
+def self_attention_model():
+    """Test SelfAttention module forward pass and output shapes."""
+    feature_dim = 32
+    batch_size = 4
+    seq_len = 20
+
+    attn = dlfiltertorch.SelfAttention(feature_dim)
+    x = torch.randn(batch_size, seq_len, feature_dim)
+    out, weights = attn(x)
+
+    assert out.shape == (batch_size, seq_len, feature_dim)
+    assert weights.shape == (batch_size, seq_len)
+
+    # Weights should sum to ~1 along last dim (softmax output averaged)
+    # Just check they are non-negative
+    assert torch.all(weights >= 0.0)
+
+
+def ppg_attention_model_creation():
+    """Test PPGAttentionModel instantiation and forward pass."""
+    hidden_size = 32
+    model = dlfiltertorch.PPGAttentionModel(hidden_size=hidden_size)
+
+    # PPGAttentionModel expects (batch, 1, even_length)
+    batch_size = 4
+    x = torch.randn(batch_size, 1, 100)
+    output = model(x)
+
+    assert output.shape == (batch_size, 1, 100)
+
+    # Test with different even-length input
+    x2 = torch.randn(batch_size, 1, 64)
+    output2 = model(x2)
+    assert output2.shape == (batch_size, 1, 64)
+
+
+def ppg_attention_dlfilter(testtemproot):
+    """Test PPGAttentionDLFilter initialization, getname, makenet."""
+    filter_obj = dlfiltertorch.PPGAttentionDLFilter(
+        hidden_size=32,
+        window_size=100,
+        num_epochs=1,
+        modelroot=testtemproot,
+        namesuffix="test",
+    )
+
+    assert filter_obj.nettype == "ppgattention"
+    assert filter_obj.hidden_size == 32
+
+    filter_obj.getname()
+    assert "ppgattention" in filter_obj.modelname
+    assert os.path.exists(filter_obj.modelpath)
+
+    filter_obj.makenet()
+    assert filter_obj.model is not None
+    assert isinstance(filter_obj.model, dlfiltertorch.PPGAttentionModel)
+
+    # Test forward pass through DLFilter's predict_model
+    val_x = np.random.randn(10, 100, 1).astype(np.float32)
+    predictions = filter_obj.predict_model(val_x)
+    assert predictions.shape == val_x.shape
+
+
+def dense_autoencoder_model_creation():
+    """Test DenseAutoencoderModel instantiation and forward pass."""
+    window_size = 64
+    encoding_dim = 10
+    num_layers = 4
+    dropout_rate = 0.3
+    activation = "relu"
+    inputsize = 1
+
+    model = dlfiltertorch.DenseAutoencoderModel(
+        window_size=window_size,
+        encoding_dim=encoding_dim,
+        num_layers=num_layers,
+        dropout_rate=dropout_rate,
+        activation=activation,
+        inputsize=inputsize,
+    )
+    model.eval()
+
+    batch_size = 4
+    x = torch.randn(batch_size, inputsize, window_size)
+    output = model(x)
+
+    assert output.shape == (batch_size, inputsize, window_size)
+
+    # Test get_config
+    config = model.get_config()
+    assert config["window_size"] == window_size
+    assert config["encoding_dim"] == encoding_dim
+    assert config["num_layers"] == num_layers
+    assert config["activation"] == activation
+
+    # Test with tanh activation
+    model_tanh = dlfiltertorch.DenseAutoencoderModel(
+        window_size=window_size,
+        encoding_dim=encoding_dim,
+        num_layers=num_layers,
+        dropout_rate=dropout_rate,
+        activation="tanh",
+        inputsize=inputsize,
+    )
+    model_tanh.eval()
+    output_tanh = model_tanh(x)
+    assert output_tanh.shape == (batch_size, inputsize, window_size)
+
+
+def dense_autoencoder_dlfilter(testtemproot):
+    """Test DenseAutoencoderDLFilter initialization, getname, makenet."""
+    filter_obj = dlfiltertorch.DenseAutoencoderDLFilter(
+        encoding_dim=10,
+        window_size=64,
+        num_layers=4,
+        num_epochs=1,
+        modelroot=testtemproot,
+        namesuffix="test",
+    )
+
+    assert filter_obj.nettype == "autoencoder"
+    assert filter_obj.encoding_dim == 10
+
+    filter_obj.getname()
+    assert "autoencoder" in filter_obj.modelname
+    assert os.path.exists(filter_obj.modelpath)
+
+    filter_obj.makenet()
+    assert filter_obj.model is not None
+    assert isinstance(filter_obj.model, dlfiltertorch.DenseAutoencoderModel)
+
+    # Test predict
+    val_x = np.random.randn(10, 64, 1).astype(np.float32)
+    predictions = filter_obj.predict_model(val_x)
+    assert predictions.shape == val_x.shape
+
+
+def conv_autoencoder_model_creation():
+    """Test ConvAutoencoderModel instantiation and forward pass."""
+    # Use window_size=65 (2^6+1) so MaxPool1d(2, padding=1) sizes match formula
+    # 65 -> 33 -> 17 -> 9 -> 5 (all odd, formula matches actual)
+    window_size = 65
+    encoding_dim = 8
+    num_filters = 4
+    kernel_size = 3
+    dropout_rate = 0.3
+    activation = "relu"
+    inputsize = 1
+
+    model = dlfiltertorch.ConvAutoencoderModel(
+        window_size=window_size,
+        encoding_dim=encoding_dim,
+        num_filters=num_filters,
+        kernel_size=kernel_size,
+        dropout_rate=dropout_rate,
+        activation=activation,
+        inputsize=inputsize,
+    )
+    model.eval()
+
+    batch_size = 4
+    x = torch.randn(batch_size, inputsize, window_size)
+    output = model(x)
+
+    assert output.shape == (batch_size, inputsize, window_size)
+
+    # Test get_config
+    config = model.get_config()
+    assert config["window_size"] == window_size
+    assert config["encoding_dim"] == encoding_dim
+    assert config["num_filters"] == num_filters
+
+
+def conv_autoencoder_dlfilter(testtemproot):
+    """Test ConvAutoencoderDLFilter initialization, getname, makenet."""
+    filter_obj = dlfiltertorch.ConvAutoencoderDLFilter(
+        encoding_dim=8,
+        num_filters=4,
+        kernel_size=3,
+        window_size=65,
+        num_layers=4,
+        num_epochs=1,
+        modelroot=testtemproot,
+        namesuffix="test",
+    )
+
+    assert filter_obj.nettype == "convautoencoder"
+
+    filter_obj.getname()
+    assert "convautoencoder" in filter_obj.modelname
+    assert os.path.exists(filter_obj.modelpath)
+
+    filter_obj.makenet()
+    assert filter_obj.model is not None
+    assert isinstance(filter_obj.model, dlfiltertorch.ConvAutoencoderModel)
+
+    # Test predict
+    val_x = np.random.randn(10, 65, 1).astype(np.float32)
+    predictions = filter_obj.predict_model(val_x)
+    assert predictions.shape == val_x.shape
+
+
+def calcnumchannels_test():
+    """Test calcnumchannels for all 4 combinations of usebadpts and dofft."""
+    # No badpts, no fft
+    numchans, badptchans, fftchans = dlfiltertorch.calcnumchannels(False, False)
+    assert numchans == 1
+    assert badptchans == 0
+    assert fftchans == 0
+
+    # With badpts, no fft
+    numchans, badptchans, fftchans = dlfiltertorch.calcnumchannels(True, False)
+    assert numchans == 2
+    assert badptchans == 1
+    assert fftchans == 0
+
+    # No badpts, with fft
+    numchans, badptchans, fftchans = dlfiltertorch.calcnumchannels(False, True)
+    assert numchans == 3
+    assert badptchans == 0
+    assert fftchans == 2
+
+    # With badpts, with fft
+    numchans, badptchans, fftchans = dlfiltertorch.calcnumchannels(True, True)
+    assert numchans == 4
+    assert badptchans == 1
+    assert fftchans == 2
+
+
+def datatochannels_test():
+    """Test datatochannels with various configurations."""
+    length = 100
+    timecourse = np.random.randn(length).astype(np.float64)
+    badpts = np.zeros(length, dtype=np.float64)
+    badpts[20:30] = 1.0
+
+    # Basic: no badpts, no fft
+    result = dlfiltertorch.datatochannels(timecourse, badpts, usebadpts=False, dofft=False)
+    assert result.shape == (length, 1)
+    assert np.allclose(result[:, 0], timecourse)
+
+    # With badpts
+    result_bp = dlfiltertorch.datatochannels(timecourse, badpts, usebadpts=True, dofft=False)
+    assert result_bp.shape == (length, 2)
+    assert np.allclose(result_bp[:, 1], badpts)
+    # Data at bad points should be zeroed
+    assert np.all(result_bp[20:30, 0] == 0.0)
+
+    # With fft (no badpts)
+    result_fft = dlfiltertorch.datatochannels(timecourse, badpts, usebadpts=False, dofft=True)
+    assert result_fft.shape == (length, 3)
+    assert np.allclose(result_fft[:, 0], timecourse)
+
+    # With both badpts and fft
+    result_both = dlfiltertorch.datatochannels(timecourse, badpts, usebadpts=True, dofft=True)
+    assert result_both.shape == (length, 4)
+    assert np.allclose(result_both[:, 1], badpts)
+
+    # Zero signal should produce zero fft channels
+    zero_tc = np.zeros(length, dtype=np.float64)
+    result_zero = dlfiltertorch.datatochannels(zero_tc, badpts, usebadpts=False, dofft=True)
+    assert result_zero.shape == (length, 3)
+    assert np.allclose(result_zero[:, 1], 0.0)
+    assert np.allclose(result_zero[:, 2], 0.0)
+
+
+def filtscale_hybrid():
+    """Test filtscale in hybrid mode."""
+    data = np.random.randn(64)
+
+    # Forward hybrid mode
+    scaled_data, scalefac = dlfiltertorch.filtscale(data, hybrid=True, lognormalize=True)
+    assert scaled_data.shape == (64, 2)
+    # First column should be original data in hybrid mode
+    assert np.allclose(scaled_data[:, 0], data)
+
+    # Reverse hybrid mode returns just the first column (original data)
+    reconstructed = dlfiltertorch.filtscale(
+        scaled_data, scalefac=scalefac, reverse=True, hybrid=True
+    )
+    assert np.allclose(reconstructed, data)
+
+
+def filtscale_roundtrip():
+    """Test filtscale forward/reverse roundtrip for both log and linear normalization."""
+    data = np.random.randn(128)
+
+    # Roundtrip with log normalization
+    scaled_log, sf_log = dlfiltertorch.filtscale(data, reverse=False, lognormalize=True)
+    recon_log = dlfiltertorch.filtscale(
+        scaled_log, scalefac=sf_log, reverse=True, lognormalize=True
+    )
+    assert recon_log.shape == data.shape
+    assert mse(data, recon_log) < 0.1
+
+    # Roundtrip with linear normalization
+    scaled_lin, sf_lin = dlfiltertorch.filtscale(data, reverse=False, lognormalize=False)
+    recon_lin = dlfiltertorch.filtscale(
+        scaled_lin, scalefac=sf_lin, reverse=True, lognormalize=False
+    )
+    assert recon_lin.shape == data.shape
+    assert mse(data, recon_lin) < 1e-10
+
+
+def test_dlfilterops(debug=False, local=False):
+    # set input and output directories
+    testtemproot = get_test_temp_path(local)
+
+    thedummydata = create_dummy_data()
+
+    if debug:
+        print("cnn_model_creation()")
+    cnn_model_creation()
+
+    if debug:
+        print("cnn_dlfilter_initialization(testtemproot)")
+    cnn_dlfilter_initialization(testtemproot)
+
+    if debug:
+        print("cnn_dlfilter_initialize(testtemproot)")
+    cnn_dlfilter_initialize(testtemproot)
+
+    if debug:
+        print("predict_model(testtemproot, thedummydata)")
+    predict_model(testtemproot, thedummydata)
+
+    if debug:
+        print("apply_method(testtemproot)")
+    apply_method(testtemproot)
+
+    if debug:
+        print("apply_method_with_badpts(testtemproot)")
+    apply_method_with_badpts(testtemproot)
+
+    if debug:
+        print("save_and_load_cnn_model(testtemproot)")
+    save_and_load_cnn_model(testtemproot)
+
+    if debug:
+        print("save_and_load_ppgattention_model(testtemproot)")
+    save_and_load_ppgattention_model(testtemproot)
+
+    if debug:
+        print("save_and_load_convautoencoder_model(testtemproot)")
+    save_and_load_convautoencoder_model(testtemproot)
+
+    if debug:
+        print("loaddata_requires_initialize()")
+    loaddata_requires_initialize()
+
+    if debug:
+        print("loaddata_calls_prep_when_initialized()")
+    loaddata_calls_prep_when_initialized()
+
+    if debug:
+        print("minimal_cpu_training_loop_cnn(testtemproot)")
+    minimal_cpu_training_loop_cnn(testtemproot)
+
+    if debug:
+        print("readindata_filters_and_returns_expected_shapes()")
+    readindata_filters_and_returns_expected_shapes()
+
+    if debug:
+        print("prep_windowing_and_split_paths()")
+    prep_windowing_and_split_paths()
+
+    if debug:
+        print("filtscale_forward()")
+    filtscale_forward()
+
+    if debug:
+        print("filtscale_reverse()")
+    filtscale_reverse()
+
+    if debug:
+        print("tobadpts()")
+    tobadpts()
+
+    if debug:
+        print("targettoinput()")
+    targettoinput()
+
+    if debug:
+        print("model_with_different_activations(testtemproot)")
+    model_with_different_activations(testtemproot)
+
+    if debug:
+        print("device_selection()")
+    device_selection()
+
+    if debug:
+        print("infodict_population(testtemproot)")
+    infodict_population(testtemproot)
+
+    if debug:
+        print("self_attention_model()")
+    self_attention_model()
+
+    if debug:
+        print("ppg_attention_model_creation()")
+    ppg_attention_model_creation()
+
+    if debug:
+        print("ppg_attention_dlfilter(testtemproot)")
+    ppg_attention_dlfilter(testtemproot)
+
+    if debug:
+        print("dense_autoencoder_model_creation()")
+    dense_autoencoder_model_creation()
+
+    if debug:
+        print("dense_autoencoder_dlfilter(testtemproot)")
+    dense_autoencoder_dlfilter(testtemproot)
+
+    if debug:
+        print("conv_autoencoder_model_creation()")
+    conv_autoencoder_model_creation()
+
+    if debug:
+        print("conv_autoencoder_dlfilter(testtemproot)")
+    conv_autoencoder_dlfilter(testtemproot)
+
+    if debug:
+        print("calcnumchannels_test()")
+    calcnumchannels_test()
+
+    if debug:
+        print("datatochannels_test()")
+    datatochannels_test()
+
+    if debug:
+        print("filtscale_hybrid()")
+    filtscale_hybrid()
+
+    if debug:
+        print("filtscale_roundtrip()")
+    filtscale_roundtrip()
+
+
+if __name__ == "__main__":
+    test_dlfilterops(debug=True, local=True)

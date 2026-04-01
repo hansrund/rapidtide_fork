@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -24,12 +24,13 @@ import numpy as np
 
 import rapidtide.calcsimfunc as tide_calcsimfunc
 import rapidtide.filter as tide_filt
-import rapidtide.glmpass as tide_glmpass
-import rapidtide.helper_classes as tide_classes
+import rapidtide.linfitfiltpass as tide_linfitfiltpass
 import rapidtide.miscmath as tide_math
 import rapidtide.peakeval as tide_peakeval
 import rapidtide.resample as tide_resample
+import rapidtide.simFuncClasses as tide_simFuncClasses
 import rapidtide.simfuncfit as tide_simfuncfit
+import rapidtide.util as tide_util
 
 try:
     import mkl
@@ -37,34 +38,6 @@ try:
     mklexists = True
 except ImportError:
     mklexists = False
-
-
-def numpy2shared(inarray, thetype):
-    thesize = inarray.size
-    theshape = inarray.shape
-    if thetype == np.float64:
-        inarray_shared = mp.RawArray("d", inarray.reshape(thesize))
-    else:
-        inarray_shared = mp.RawArray("f", inarray.reshape(thesize))
-    inarray = np.frombuffer(inarray_shared, dtype=thetype, count=thesize)
-    inarray.shape = theshape
-    return inarray
-
-
-def allocshared(theshape, thetype):
-    thesize = int(1)
-    if not isinstance(theshape, (list, tuple)):
-        thesize = theshape
-    else:
-        for element in theshape:
-            thesize *= int(element)
-    if thetype == np.float64:
-        outarray_shared = mp.RawArray("d", thesize)
-    else:
-        outarray_shared = mp.RawArray("f", thesize)
-    outarray = np.frombuffer(outarray_shared, dtype=thetype, count=thesize)
-    outarray.shape = theshape
-    return outarray, outarray_shared, theshape
 
 
 def multisine(timepoints, parameterlist):
@@ -144,7 +117,7 @@ def test_delayestimation(displayplots=False, debug=False):
         plt.show()
 
     threshval = pedestal / 4.0
-    waveforms = numpy2shared(waveforms, np.float64)
+    waveforms, waveforms_shm = tide_util.numpy2shared(waveforms, np.float64)
 
     referencetc = tide_resample.doresample(
         timepoints, waveforms[refnum, :], oversamptimepoints, method=interptype
@@ -157,7 +130,7 @@ def test_delayestimation(displayplots=False, debug=False):
     # set up theCorrelator
     if debug:
         print("\n\nsetting up theCorrelator")
-    theCorrelator = tide_classes.Correlator(
+    theCorrelator = tide_simFuncClasses.Correlator(
         Fs=oversampfreq,
         ncprefilter=theprefilter,
         detrendorder=detrendorder,
@@ -170,8 +143,8 @@ def test_delayestimation(displayplots=False, debug=False):
     dummy, trimmedcorrscale, dummy = theCorrelator.getfunction()
     corroutlen = np.shape(trimmedcorrscale)[0]
     internalvalidcorrshape = (numlocs, corroutlen)
-    corrout, dummy, dummy = allocshared(internalvalidcorrshape, np.float64)
-    meanval, dummy, dummy = allocshared((numlocs), np.float64)
+    corrout, corrout_shm = tide_util.allocshared(internalvalidcorrshape, np.float64)
+    meanval, meanval_shm = tide_util.allocshared((numlocs), np.float64)
     if debug:
         print("corrout shape:", corrout.shape)
         print("theCorrelator: corroutlen=", corroutlen)
@@ -179,7 +152,7 @@ def test_delayestimation(displayplots=False, debug=False):
     # set up theMutualInformationator
     if debug:
         print("\n\nsetting up theMutualInformationator")
-    theMutualInformationator = tide_classes.MutualInformationator(
+    theMutualInformationator = tide_simFuncClasses.MutualInformationator(
         Fs=oversampfreq,
         smoothingtime=smoothingtime,
         ncprefilter=theprefilter,
@@ -197,7 +170,7 @@ def test_delayestimation(displayplots=False, debug=False):
     # set up thefitter
     if debug:
         print("\n\nsetting up thefitter")
-    thefitter = tide_classes.SimilarityFunctionFitter(
+    thefitter = tide_simFuncClasses.SimilarityFunctionFitter(
         lagmod=lagmod,
         lthreshval=0.0,
         uthreshval=1.0,
@@ -210,21 +183,21 @@ def test_delayestimation(displayplots=False, debug=False):
         peakfittype=peakfittype,
     )
 
-    lagtc, dummy, dummy = allocshared(waveforms.shape, np.float64)
-    fitmask, dummy, dummy = allocshared((numlocs), "uint16")
-    failreason, dummy, dummy = allocshared((numlocs), "uint32")
-    lagtimes, dummy, dummy = allocshared((numlocs), np.float64)
-    lagstrengths, dummy, dummy = allocshared((numlocs), np.float64)
-    lagsigma, dummy, dummy = allocshared((numlocs), np.float64)
-    gaussout, dummy, dummy = allocshared(internalvalidcorrshape, np.float64)
-    windowout, dummy, dummy = allocshared(internalvalidcorrshape, np.float64)
-    rvalue, dummy, dummy = allocshared((numlocs), np.float64)
-    r2value, dummy, dummy = allocshared((numlocs), np.float64)
-    fitcoff, dummy, dummy = allocshared((waveforms.shape), np.float64)
-    fitNorm, dummy, dummy = allocshared((waveforms.shape), np.float64)
-    R2, dummy, dummy = allocshared((numlocs), np.float64)
-    movingsignal, dummy, dummy = allocshared(waveforms.shape, np.float64)
-    filtereddata, dummy, dummy = allocshared(waveforms.shape, np.float64)
+    lagtc, lagtc_shm = tide_util.allocshared(waveforms.shape, np.float64)
+    fitmask, fitmask_shm = tide_util.allocshared((numlocs), "uint16")
+    failreason, failreason_shm = tide_util.allocshared((numlocs), "uint32")
+    lagtimes, lagtimes_shm = tide_util.allocshared((numlocs), np.float64)
+    lagstrengths, lagstrengths_shm = tide_util.allocshared((numlocs), np.float64)
+    lagsigma, lagsigma_shm = tide_util.allocshared((numlocs), np.float64)
+    gaussout, gaussout_shm = tide_util.allocshared(internalvalidcorrshape, np.float64)
+    windowout, windowout_shm = tide_util.allocshared(internalvalidcorrshape, np.float64)
+    rvalue, rvalue_shm = tide_util.allocshared((numlocs), np.float64)
+    r2value, r2value_shm = tide_util.allocshared((numlocs), np.float64)
+    fitcoff, fitcoff_shm = tide_util.allocshared((waveforms.shape), np.float64)
+    fitNorm, fitNorm_shm = tide_util.allocshared((waveforms.shape), np.float64)
+    R2, R2_shm = tide_util.allocshared((numlocs), np.float64)
+    movingsignal, movingsignal_shm = tide_util.allocshared(waveforms.shape, np.float64)
+    filtereddata, filtereddata_shm = tide_util.allocshared(waveforms.shape, np.float64)
 
     for nprocs in [4, 1]:
         # call correlationpass
@@ -313,7 +286,6 @@ def test_delayestimation(displayplots=False, debug=False):
                 gaussout,
                 windowout,
                 R2,
-                peakdict=thepeakdict,
                 nprocs=nprocs,
                 alwaysmultiproc=False,
                 fixdelay=None,
@@ -357,12 +329,12 @@ def test_delayestimation(displayplots=False, debug=False):
         ax.legend()
         plt.show()
 
-    filteredwaveforms, dummy, dummy = allocshared(waveforms.shape, np.float64)
+    filteredwaveforms, filteredwaveforms_shm = tide_util.allocshared(waveforms.shape, np.float64)
     for i in range(numlocs):
         filteredwaveforms[i, :] = theprefilter.apply(Fs, waveforms[i, :])
 
     for nprocs in [4, 1]:
-        voxelsprocessed_glm = tide_glmpass.glmpass(
+        voxelsprocessed_regressionfilt = tide_linfitfiltpass.linfitfiltpass(
             numlocs,
             waveforms[:, :],
             threshval,
@@ -377,7 +349,7 @@ def test_delayestimation(displayplots=False, debug=False):
             nprocs=nprocs,
             alwaysmultiproc=False,
             showprogressbar=False,
-            mp_chunksize=chunksize,
+            chunksize=chunksize,
         )
 
         if nprocs == 1:
@@ -387,13 +359,35 @@ def test_delayestimation(displayplots=False, debug=False):
         diffsignal = filtereddata
         fig = plt.figure()
         ax = fig.add_subplot(1, 1, 1)
-        # ax.plot(timepoints, filtereddata[refnum, :], label='filtereddata')
-        ax.plot(oversamptimepoints, referencetc, label="referencetc")
-        ax.plot(timepoints, movingsignal[refnum, :], label="movingsignal")
+        # ax.plot(oversamptimepoints, referencetc, label="referencetc")
+        ax.plot(timepoints, waveforms[refnum, :], label="waveform")
+        ax.plot(timepoints, fitcoff[refnum] * movingsignal[refnum, :], label="movingsignal")
+        # ax.plot(timepoints, filtereddata[refnum, :], label="filtereddata")
         ax.legend()
         plt.show()
 
-        print(proctype, "glmpass", np.mean(diffsignal), np.max(np.fabs(diffsignal)))
+        print(proctype, "linfitfiltpass", np.mean(diffsignal), np.max(np.fabs(diffsignal)))
+
+    # clean up shared memory
+    tide_util.cleanup_shm(waveforms_shm)
+    tide_util.cleanup_shm(corrout_shm)
+    tide_util.cleanup_shm(meanval_shm)
+    tide_util.cleanup_shm(lagtc_shm)
+    tide_util.cleanup_shm(fitmask_shm)
+    tide_util.cleanup_shm(failreason_shm)
+    tide_util.cleanup_shm(lagtimes_shm)
+    tide_util.cleanup_shm(lagstrengths_shm)
+    tide_util.cleanup_shm(lagsigma_shm)
+    tide_util.cleanup_shm(gaussout_shm)
+    tide_util.cleanup_shm(windowout_shm)
+    tide_util.cleanup_shm(rvalue_shm)
+    tide_util.cleanup_shm(r2value_shm)
+    tide_util.cleanup_shm(fitcoff_shm)
+    tide_util.cleanup_shm(fitNorm_shm)
+    tide_util.cleanup_shm(R2_shm)
+    tide_util.cleanup_shm(movingsignal_shm)
+    tide_util.cleanup_shm(filtereddata_shm)
+    tide_util.cleanup_shm(filteredwaveforms_shm)
 
 
 if __name__ == "__main__":

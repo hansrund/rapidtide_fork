@@ -1,0 +1,9 @@
+#!/bin/bash
+
+#SBATCH	--cpus-per-task=1
+#SBATCH	--gres=gpu:1
+#SBATCH	--mem=32G
+
+cd /home/frederic/code/rapidtide/rapidtide/experimental
+/cm/shared/apps/miniforge3/envs/mic/bin/python /home/frederic/code/rapidtide/rapidtide/experimental/batchtrain
+

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -18,17 +18,49 @@
 #
 import argparse
 import sys
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 import rapidtide.fit as tide_fit
 import rapidtide.io as tide_io
 from rapidtide.workflows.parser_funcs import is_valid_file
 
 
-def _get_parser():
+def _get_parser() -> Any:
     """
-    Argument parser for polyfitim
+    Argument parser for polyfitim.
+
+    This function constructs and returns an `argparse.ArgumentParser` object configured
+    to parse command-line arguments for the `polyfitim` tool. It is designed to handle
+    the fitting of a spatial template to 3D or 4D NIFTI files, with optional region-specific
+    fitting using an atlas file.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser for `polyfitim` command-line interface.
+
+    Notes
+    -----
+    The parser expects several required NIFTI files:
+    - Data file (`datafile`)
+    - Data mask file (`datamask`)
+    - Template file (`templatefile`)
+    - Template mask file (`templatemask`)
+
+    Optional arguments include:
+    - `--regionatlas`: File containing a 3D NIFTI atlas for region-specific fitting.
+    - `--order`: Polynomial order for the fit (default is 1).
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['data.nii', 'mask.nii', 'template.nii', 'template_mask.nii', 'output'])
+    >>> print(args.datafile)
+    'data.nii'
     """
     parser = argparse.ArgumentParser(
         prog="polyfitim",
@@ -78,14 +110,69 @@ def _get_parser():
 
 
 def polyfitim(
-    datafile,
-    datamask,
-    templatefile,
-    templatemask,
-    outputroot,
-    regionatlas=None,
-    order=1,
-):
+    datafile: Any,
+    datamask: Any,
+    templatefile: Any,
+    templatemask: Any,
+    outputroot: Any,
+    regionatlas: Optional[Any] = None,
+    order: int = 1,
+) -> None:
+    """
+    Fit polynomial models to time series data within regions defined by masks.
+
+    This function performs polynomial fitting of specified order to time series data
+    within spatial regions defined by a template mask. It supports both global and
+    region-specific fitting, and outputs fitted time series, polynomial coefficients,
+    and R² values.
+
+    Parameters
+    ----------
+    datafile : Any
+        Path to the input NIfTI file containing the time series data.
+    datamask : Any
+        Path to the NIfTI file containing the data mask. Can be 3D or 4D.
+    templatefile : Any
+        Path to the NIfTI file containing the template (e.g., a regressor) for fitting.
+    templatemask : Any
+        Path to the NIfTI file containing the mask for the template.
+    outputroot : Any
+        Root name for output files (e.g., 'output' will produce 'output_fit.nii.gz').
+    regionatlas : Any, optional
+        Path to the NIfTI file containing region labels. If provided, fitting is
+        performed separately for each region. Default is None.
+    order : int, optional
+        Order of the polynomial to fit. Must be >= 1. Default is 1 (linear fit).
+
+    Returns
+    -------
+    None
+        Function writes multiple output files:
+        - Fitted time series (NIfTI format)
+        - Residuals (NIfTI format)
+        - R² values (text file)
+        - Polynomial coefficients (text files)
+
+    Notes
+    -----
+    - The function assumes that all input files are in NIfTI format.
+    - If `datamask` is 4D, it is treated as a time-varying mask.
+    - If `regionatlas` is provided, fitting is performed separately for each region.
+    - The function uses `tide_io` for reading/writing NIfTI files and `tide_fit.mlregress`
+      for polynomial regression.
+
+    Examples
+    --------
+    >>> polyfitim(
+    ...     datafile='data.nii.gz',
+    ...     datamask='mask.nii.gz',
+    ...     templatefile='template.nii.gz',
+    ...     templatemask='template_mask.nii.gz',
+    ...     outputroot='output',
+    ...     regionatlas='atlas.nii.gz',
+    ...     order=2
+    ... )
+    """
     # check the order
     if order < 1:
         print("order must be >= 1")
@@ -189,10 +276,10 @@ def polyfitim(
     fitdata = np.zeros((numspatiallocs, timepoints), dtype="float")
     if regionatlas is not None:
         polycoffs = np.zeros((numregions, order + 1, timepoints), dtype="float")
-        rvals = np.zeros((numregions, timepoints), dtype="float")
+        r2vals = np.zeros((numregions, timepoints), dtype="float")
     else:
         polycoffs = np.zeros((order + 1, timepoints), dtype="float")
-        rvals = np.zeros(timepoints, dtype="float")
+        r2vals = np.zeros(timepoints, dtype="float")
 
     if regionatlas is not None:
         print("making region masks")
@@ -219,7 +306,7 @@ def polyfitim(
                 evlist = []
                 for i in range(1, order + 1):
                     evlist.append((rs_templatefile[voxelstofit]) ** i)
-                thefit, R = tide_fit.mlregress(
+                thefit, R2 = tide_fit.mlregress(
                     evlist,
                     rs_datafile[voxelstofit, thetime][0],
                 )
@@ -230,14 +317,14 @@ def polyfitim(
                     fitdata[voxelstoreconstruct, thetime] += polycoffs[region, i, thetime] * (
                         rs_templatefile[voxelstoreconstruct] ** i
                     )
-                rvals[region, thetime] = R
+                r2vals[region, thetime] = R2
         else:
             voxelstofit = np.where(thisdatamask > 0.5)
             voxelstoreconstruct = np.where(rs_templatemask > 0.5)
             evlist = []
             for i in range(1, order + 1):
                 evlist.append((rs_templatefile[voxelstofit]) ** i)
-            thefit, R = tide_fit.mlregress(evlist, rs_datafile[voxelstofit, thetime][0])
+            thefit, R2 = tide_fit.mlregress(evlist, rs_datafile[voxelstofit, thetime][0])
             for i in range(order + 1):
                 polycoffs[i, thetime] = thefit[0, i]
             fitdata[voxelstoreconstruct, thetime] = polycoffs[0, thetime]
@@ -245,13 +332,13 @@ def polyfitim(
                 fitdata[voxelstoreconstruct, thetime] += polycoffs[i, thetime] * (
                     rs_templatefile[voxelstoreconstruct] ** i
                 )
-            rvals[thetime] = R
+            r2vals[thetime] = R2
     residuals = rs_datafile - fitdata
 
     # write out the data files
     print("writing time series")
 
-    tide_io.writenpvecs(rvals, outputroot + "_rvals.txt")
+    tide_io.writenpvecs(r2vals, outputroot + "_r2vals.txt")
     if regionatlas is not None:
         for region in range(0, numregions):
             outstring = f"region {region + 1}:"
@@ -279,7 +366,60 @@ def polyfitim(
     )
 
 
-def main(args):
+def main(args: Any) -> None:
+    """
+    Main function to perform polynomial fitting on imaging data.
+
+    This function serves as the entry point for polynomial fitting operations
+    on medical imaging data using template-based registration and fitting.
+
+    Parameters
+    ----------
+    args : Any
+        Namespace object containing all required arguments for the polynomial fitting
+        operation. Expected attributes include:
+
+        - datafile : str
+            Path to the input data file to be fitted
+        - datamask : str
+            Path to the data mask file for region of interest specification
+        - templatefile : str
+            Path to the template file for reference
+        - templatemask : str
+            Path to the template mask file for reference region specification
+        - outputroot : str
+            Root path for output files
+        - regionatlas : str, optional
+            Path to region atlas file for anatomical labeling
+        - order : int, optional
+            Order of the polynomial to fit (default is typically 1)
+
+    Returns
+    -------
+    None
+        This function does not return any value. It performs the polynomial fitting
+        operation and saves results to the specified output directory.
+
+    Notes
+    -----
+    The function internally calls `polyfitim` with the provided arguments to
+    perform the actual polynomial fitting computation. All input files must be
+    properly formatted and accessible.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     datafile='data.nii.gz',
+    ...     datamask='data_mask.nii.gz',
+    ...     templatefile='template.nii.gz',
+    ...     templatemask='template_mask.nii.gz',
+    ...     outputroot='output',
+    ...     regionatlas='atlas.nii.gz',
+    ...     order=2
+    ... )
+    >>> main(args)
+    """
     polyfitim(
         args.datafile,
         args.datamask,

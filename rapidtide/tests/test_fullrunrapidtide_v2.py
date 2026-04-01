@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -19,57 +19,75 @@
 import os
 
 import matplotlib as mpl
+import pytest
 
-import rapidtide.workflows.rapidtide as rapidtide_workflow
-import rapidtide.workflows.rapidtide_parser as rapidtide_parser
-from rapidtide.tests.utils import get_examples_path, get_test_temp_path
+from rapidtide.tests.utils import get_example_and_temp_roots, run_rapidtide
+
+pytestmark = pytest.mark.slow
 
 
-def test_fullrunrapidtide_v2(debug=False, displayplots=False):
+def test_fullrunrapidtide_v2(debug=False, local=False, displayplots=False):
+    # set input and output directories
+    exampleroot, testtemproot = get_example_and_temp_roots(local)
+
     # run rapidtide
     inputargs = [
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST.nii.gz"),
-        os.path.join(get_test_temp_path(), "sub-RAPIDTIDETEST2"),
-        "--tmask",
-        os.path.join(get_examples_path(), "tmask3.txt"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST.nii.gz"),
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST2"),
+        "--tincludemask",
+        os.path.join(exampleroot, "tmask3.txt"),
         "--corrmask",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_restrictedmask.nii.gz"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_restrictedmask.nii.gz"),
         "--globalmeaninclude",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_brainmask.nii.gz"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_brainmask.nii.gz"),
         "--globalmeanexclude",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_nullmask.nii.gz"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_nullmask.nii.gz"),
         "--refineinclude",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_brainmask.nii.gz"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_brainmask.nii.gz"),
         "--refineexclude",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_nullmask.nii.gz"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_nullmask.nii.gz"),
         "--offsetinclude",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_brainmask.nii.gz"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_brainmask.nii.gz"),
         "--offsetexclude",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_nullmask.nii.gz"),
-        "--spatialfilt", "-1",
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_nullmask.nii.gz"),
+        "--spatialfilt",
+        "-1",
         "--savelags",
         "--autosync",
         "--checkpoint",
-        "--timerange", "11", "-1",
+        "--timerange",
+        "11",
+        "-1",
         "--saveintermediatemaps",
         "--bipolar",
-        "--outputlevel", "max", 
+        "--norefinedelay",
+        "--outputlevel",
+        "max",
         "--calccoherence",
+        "--cleanrefined",
         "--dispersioncalc",
-        "--nprocs", "1",
-        "--passes", "2",
-        "--numnull", "0",
-        "--similaritymetric", "hybrid",
-        "--globalsignalmethod", "meanscale",
-        "--refineprenorm", "var",
+        "--nprocs",
+        "1",
+        "--passes",
+        "2",
+        "--numnull",
+        "0",
+        "--similaritymetric",
+        "hybrid",
+        "--globalsignalmethod",
+        "meanscale",
+        "--refineprenorm",
+        "var",
         "--motionfile",
-        os.path.join(get_examples_path(), "fakemotion.par"),
+        os.path.join(exampleroot, "fakemotion.par"),
+        "--denoisesourcefile",
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST.nii.gz"),
     ]
     if debug:
         print(inputargs)
-    rapidtide_workflow.rapidtide_main(rapidtide_parser.process_args(inputargs=inputargs))
+    run_rapidtide(inputargs)
 
 
 if __name__ == "__main__":
     mpl.use("TkAgg")
-    test_fullrunrapidtide_v2(debug=True, displayplots=True)
+    test_fullrunrapidtide_v2(debug=True, local=True, displayplots=True)

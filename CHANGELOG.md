@@ -1,12 +1,452 @@
 # Release history
 
+## Version 3.1.9 (3/19/26)
+* (rapidtide) There's a new optional despeckling procedure, which you can turn on with ``--robustdelayfit``.  It uses a region growing method to try to ensure consistency in delay maps while allowing for discontinuities between vascular territories.
+* (rapidtide) Added some infrastructure for territory processing.
+* (rapidtide, retroregress) Fixed calculation of the refined R value.
+* (rapidtide, retroregress) Expanded and improved regional time course output.
+* (atlasaverage) Pulled get4Dtimecourses into a separate routine so it can be reused in rapidtide territory processing.
+* (tidepool) Fixed a crash when data is in MNI152 space and FSL is not present.
+* (happy) Now outputs variance metrics so you can see how effective noise regression is.
+* (ccorrica) Updated to use SimilarityFunctionFitter, output csv files.
+* (SimilarityFunctionFitter) Fixed a strange bug where very small delay values were not fit properly.  Affects all programs using correlation fits (most of them).
+* (package) Made pyfftw a required dependency.
+* (package) Resolved future deprecations from scipy.fftpack and np.matrix.
+* (bonus) The date matches the version number (US only :-) )!
+
+## Version 3.1.8 (3/2/26)
+* (rapidtide) Fixed a bug in how the despeckle search region is set.
+* (rapidtide) Added a number of refinements to despeckling.  This improves behavior in voxels that get selected, but patches of voxels may still not get processed.
+* (rapidtide) Added option to print timing information at the end of a run (``--showtimings``).
+* (happy) Fixed several edge case bugs in phase projection.
+* (filter) Removed a LOT of old, redundant routines.
+* (fit) Fixed baseline calculation for mutual information.
+* (Docker) Started building the ability for containers to self test.
+
+## Version 3.1.7 (2/23/26)
+* (happy) Added an experimental feature that does cheesy sLFO removal prior to cardiac waveform extraction.  It seems to improve the extracted cardiac signal some, and makes the phase projected data a bit cleaner.  Needs further testing.
+* (happy) Codex found several bugs, which are now fixed.
+* (tidepool) Fixed the bug where initial map display limits were sometimes set to full rather than smart.
+* (tidepool) Fixed the bug where the movie toggle button behavior was flaky and inconsistent.
+* (rapidtide) Added some scaffolding to support a GPU version of correlationpass.  Currently locked out.
+* (package) Added a new routine for spectral visualization.
+* (package) Further increases in test coverage.
+* (package) Restructured testing to make it faster and less fragile.
+* (docs) Docs now build properly after fixing requirements (this broke around v3.1.4).
+* (docs) Added a section clarifying masking behavior to "Theory of Operation".
+* (docs) Added a section about using the superior sagittal sinus as a source of the initial regressor to the rapidtide usage section.
+
+## Version 3.1.6 (2/16/26)
+* (package) Using alternating Codex and Claude, got test coverage to 90.99%.  Closes https://github.com/bbfrederick/rapidtide/issues/13.
+* (package) Cleaned up .circleci/config.yml.
+
+## Version 3.1.5 (2/13/26)
+* (package) Used Claude to write a lot of tests.  Test coverage is currently at 84.39%.  This also uncovered a lot of bugs (worst ones listed below).
+* (package) Updated all copyright notices to 2026.
+* (atlastool) Fixed an off by one bug in calculating region volumes.
+* (histnifti) Fixed a percentile calculation when timepoints is small.
+* (spatialmi) Command line arguments always overrode arguments passed to main routine.
+* (showstxcorr) Now properly handles nondefault starttime or very short duration.
+* (showstxcorr) matrixoutput now settable from the command line.
+* (ppgproc) Fixed a crashing bug in HeartRateExtractor.
+* (ppgproc) Fixed deprecated call in PPGFeatureExtractor.
+* (showxcorrx) Fixed command line processing logic.
+* (niftistats) Fixed some bugs in processing ICC values.
+* (niftidecomp) Fixed processing methods other than FastICA to match.
+* (linfitfilt.py) Fixed a bug when numskip != 0.
+* (correlate.py) Return pearsonr values correctly.
+* (correlate.py) matchsamplerates now guarantees that vectors are matched in size.
+* (dlfilter.py) Fixed a bug in specifying model name in DeepLearningFilter.
+* (dlfiltertorch.py) Fixed a shape bug in ConvAutoencoderModel.
+* (fit.py, calcandfitcorrpairs.py, simFuncClasses.py, localflow.py) Made handling of high correlation values more robust.
+* (fit.py) Fixed a bug in oscreetest.
+* (fit.py) Fixed a bug in return values of territorydecomp.
+* (fingerprint.py) Fixed processing of return values of territorydecomp.
+* (RapidtideDataset.py) Updated some deprecated calls.
+* (rapidtide_parser.py) Fixed a number of the issues listed here: https://github.com/bbfrederick/rapidtide/issues/239 (thanks to tsalo).
+* (resample.py) Fixed a bug in FastResampler when using methods other than univariate.
+* (refineregressor) Fixed a bug in findecho.
+* (roisummarize.py) Fixed a nasty bug that only chose one value from every region (!)
+* (helper_classes.py) Fixed initialization bugs in the ProbeRegressor class.
+* (io.py) Fixed an encoding bug in writevec.
+* (io.py) Made a new routine to make empty MNI152 NIFTI files.
+* (docker) Temporarily removed push to Amazon ECR, since I currently don't have an account.
+
+## Version 3.1.4 (2/4/26)
+* (happy) Fixed a nasty bug that made temporal regression essentially useless.  Now that is works properly, it seems to be the preferred noise removal method.
+* (happy) Fixed an option logic error (you could select both spatial and temporal regression).
+* (docs) Added a new section to the rapidtide usage section to address https://github.com/bbfrederick/rapidtide/issues/235.  Thanks to https://github.com/themeo for the suggestion.
+* (docs) Expanded happy usage documentation, including a detailed discussion of noise removal.
+* (docker) Now that FSL works on linux/aarch64, I've gone back to using basecontainer_plus as a starting point for the container.  So FSL tools are available again.
+* (docker) Cleaned up caches to save a little space.
+* (docker) Made some security updates to the environment.
+* (package) Updated some github actions.
+* (package) Accepted several dependabot PRs.
+
+## Version 3.1.3 (1/21/26)
+* (happy) Made the new pulsatility based vessel finding method the default.
+* (happy) Made the new PPGAttention deep learning filter the default (see dlfiltertorch change).
+* (happy) Dynamically adjust the threshold for the pulsatility mask with some limits on how small the mask is.
+* (happy) Add some new metrics to the runoptions file and the timecourse sidecar files.
+* (happy) Added some sanity checks to make sure cardiac waveform extraction is less likely to fail.
+* (happy) Adjusted the names of some timecourses and output files for consistency.
+* (applydlfilter) Major internal overhaul, making the program more robust.
+* (dlfiltertorch) Added a new model and filter after a chat with Gemini, PPGAttention.  There is now a hybrid CNN/LSTM cardiac timecourse filter with attention, and a longer (~5 second) processing window.  It seems to be give more stable cardiac waveforms.  It's now the default deep learning filter in happy.
+* (dlfiltertorch) Made major changes to how model training works - loss calculation uses batches, there are more filters to exclude bad training data, models can easily incorporate bad points and FFT information.
+* (reference) Added an atlas with the Van Dijk seeds.
+* (package) Fixed a deprecated call to np.sum in fit.py (you can no longer use a generator as an argument).
+* (package) Added a security policy.
+* (package) Accepted some dependabot PRs.
+
+## Version 3.1.2 (12/4/25)
+* (rapidtide) Partial fix for https://github.com/bbfrederick/rapidtide/issues/229.  You should at least be able to specify filtering properly when the ``--delaymapping`` macro is used.  Another shoutout to https://github.com/beccaclements99 for finding this!
+* (happy) Refactored cardiacfromimage (well, Claude did, but I helped).
+* (happy) Made several tweaks and improvements the pytorch implementation of CNNModel to try to improve performance around bad or missing data.
+* (happy) Improved the training workflow for the pytorch implementation of CNNModel.
+* (applydlfilter) Improved the interface to make this more useful as an evaluation tool.
+* (package) Fixed a lot of array allocations and copies to hopefully get a little speed boost.
+* (package) Made several more type hint refinements.
+* (package) Save pyfftw wisdom for faster startup after first run.
+* (package) Optimize the length of a lot of FFTs for faster processing.
+* (package) Accepted some dependabot PRs.
+
+## Version 3.1.1 (11/17/25)
+* (rapidtide, retroregress) Correctly output relevant maps when doing CVR processing.  Closes https://github.com/bbfrederick/rapidtide/issues/226.  Thank you to https://github.com/beccaclements99 for finding this!
+* (rapiditde) Fixed a crashing bug when using PCA to estimate the initial sLFO regressor.
+* (happy) Made tensorflow an optional install because of more tf weirdness.  If tensorflow is not present, default to using the pytorch deep learning filter.  If tensorflow is present, enable the ``--usetensorflow`` option.
+* (package) Added support for python 3.14 (if you use 3.14, you cannot currently install tensorflow, so happy will use the pytorch deep learning filter).
+* (package) Lots of type hint refinements.
+* (package) Fixed lots of typos and minor bugs.
+
+## Version 3.1 (11/8/25)
+* (happy) Moved to a pytorch implementation of the deep learning filter, as tensorflow seems to be barely maintained these days.  The pytorch filter is now the default, and performance seems indistinguishable.  I'll keep the tensorflow version around until it becomes (more) cumbersome to do so.  Use ``--usetensorflow`` to get the old filter.
+* (happy) Added "pulsatility" map output - the percentage pulsatile cardiac variation around the mean in each voxel.
+* (happy) Made pass labelling consistent for output files.
+* (happy) Switched nifti file output to use maplist (jsons have description fields now).
+* (rapidtide) Output some timecourse statistics before and after sLFO regression.
+* (atlasaverage) Fixed label output when extracting data from 3D files.
+* (package) Added type hints to all core routines (thanks Claude!).  Everything works, but I'll probably be finetuning the type hints for a while to make them more specific (and I'll be resolving sloppy type handling that I'm now aware of due to mypy).
+* (package) Added docstrings to all core routines (thanks script I wrote that calls qwen3-coder locally so I don't run out of Claude tokens!).
+* (package) Added support for python 3.13 (now that tensorflow is FINALLY available for 3.13).
+* (package) Dropped support for python 3.9 (it doesn't support modern type hint formats).
+* (package) More dependabot PRs.
+
+## Version 3.0.11 (8/27/25)
+* (Docker) Fixed a critical bug in building the container.
+* (happy) Added the ability to specify an overall processing mask.
+* (docs) Revised the singularity/apptainer installation section.
+* (reference) Added MNI152NLin2009cAsym versions of the JHU atlases.
+* (package) Miscellaneous code cleanups.
+* (package) More dependabot PRs.
+
+## Version 3.0.10 (8/18/25)
+* (tidepool) Do better checking on which required files exist so it's more clear why a dataset won't load.
+* (tidepool) Add support for PySide6 (in addition to PyQt5 and PyQt6).
+* (docs) Clarified that the sLFO filtered output of rapidtide has NO other filtering applied to is - the temporal, spatial, and confound filtering is all discarded prior to the final sLFO filtering step.
+* (package) Played with some coding models (qwen3-coder, Claude) to write some docstrings and check a few routines for bugs.  It generally worked well, but you definitely have to check their work.
+* (package) Adjusted coverage calculation.
+* (package) Added a test for data simulation.
+* (package) Accepted several dependabot PRs.
+
+## Version 3.0.9 (7/3/25)
+* (rapidtide) Added an alternative method for coarse delay estimation (set ``--similaritymetric riptide`` to select).  This uses a fit to a set of delayed regressors (actually, this is the original RIPTiDe method from ~2010).
+* (rapidtide) Separated coarse delay estimation and similarity function fitting into two separate workflows (they were together in v3.0.8).
+* (rapidtide) Fixed a stupid bug in the placement of the delay refinement code block for each pass.
+* (rapidtide) Laid most of the groundwork for dynamically switching delay estimation methods and parameters between passes.
+* (package) Accepted several dependabot PRs.
+
+## Version 3.0.8 (6/26/25)
+* (rapidtide) Fix https://github.com/bbfrederick/rapidtide/issues/213 (thanks to https://github.com/tomosumi for reporting the bug).
+* (rapidtide) Split coarse delay estimation and fitting out into a separate workflow.
+* (rapidtide) Split delay refinement out into a separate workflow.
+* (rapidtide) Split regressor refinement out into a separate workflow.
+* (rapidtide) All this is in preparation for a new, modular workflow with more flexible control of the fitting process.  It's not done yet, but this is getting all internal code blocks ready for it.  I want to pause here to make sure I haven't broken anything (all the automated tests pass, but I want to be careful).
+* (docs) Some improvement to the tidepool section.
+* (package) Made a more streamlined and rational interface for allocating shared memory.
+* (package) Resolved incompatibility of statsmodels and scipy>1.15.3.
+* (package) Accepted several dependabot PRs.
+
+## Version 3.0.7.1 (6/16/25)
+* (rapidtide) Disabled sLFO filtering by default.  Use ``sLFOfiltmask`` to turn it on.
+* (retroregress) Synced with sLFO filtering changes to rapidtide.
+
+## Version 3.0.7 (6/16/25)
+* (rapidtide) Save the full autocorrelation function of the probe regressor at each pass.
+* (rapidtide) Now save a version of the mean fMRI image prior to filtering
+* (rapidtide) Added the ability to disable masking of sLFO filter. Use ``--nosLFOfiltmask`` to disable.
+* (happy) Implemented multiprocessing for detrending, phase projection, and phase projection smoothing.
+* (happy) Precache convolution gridding kernel outputs to improve repeatability.
+* (happy) Early implementation of Wright's method for finding vessels.
+* (showarbcorr) Fixed some internal issues.
+* (simdata) Many changes to finetune the simulation and make the output more realistic.  Still in progress.
+* (Docker) Turned on provenance and sbom in Docker builds.
+* (package) Accepted several dependabot PRs.
+
+## Version 3.0.6 (5/21/25)
+* (rapidtide) Made a generic, reusable multiprocessing module and moved many functions over to it.
+* (ccorrica) Samplerate is now set properly if input is a BIDS tsv file.
+* (package) Added several new tests.
+
+## Version 3.0.5 (5/7/25)
+* (rapidtide) Loosened the sample rate matching when appending timecourses to files, and read NIFTI tr values using modern header features.  This should help address https://github.com/bbfrederick/rapidtide/issues/205 (thank you to https://github.com/phildeming for finding this).
+
+## Version 3.0.4 (5/5/25)
+* (rapidtide, retrotregress, tidepool) Support for maxcorrrefined map.
+* (retroregress) Gracefully handles missing mask names in runoptions file.
+* (package) Version works again!  Thank you Chris (https://github.com/effigies)!
+* (package) Added a few more tests to catch edge cases that showed up in testing fmripost-rapidtide.
+
+## Version 3.0.3 (5/4/25)
+* (rapidtide, retroregress) If you supply a brain, GM, WM, or CSF mask, rapidtide extracts the matching timecourse from the mask at startup, and after filtering, if it's done.  retroregress extracts the timecourses after filtering.
+* (rapidtide) Fixed mask logic when gray matter mask is provided.
+* (rapidtide) Fixed a crash when ``--acfix`` is selected and a bad sidelobe is encountered if the similarity calculation range is not the entire timecourse (THAT was hard to pin down...).
+* (rapidtide, tidepool) Fixed a serious cosmetic bug in corrout files introduced in v3.0.2 - teoffset was not being set properly by rapidtide, so the tidepool similarity function display was very wrong.
+* (rapidtide) shiftedtcs file is now written during each pass if ``--saveintermediatemaps`` is set and ``--outputlevel`` is ``more`` or ``max`` (in response to a feature request).
+* (rapidtide) Added back the ability to have integral powers of the motion regressors.
+* (rapidtide) Added the ability to specify a CSF mask.
+
+
+## Version 3.0.2 (4/28/25)
+* (retroregress) Added a new argument to ``--outputlevel``, ``onlyregressors``.  When selected, retroregress generates the voxel specific sLFO regressor(s), saves them, and exits.  This option exists so that you can use the rapidtide voxel specific sLFO regressors in an external processing routine such as XCP-D without extraneous data storage or processing time. 
+* (rapidtide) Leaned harder into using the voxelData class, and beefed up its capabilities.
+* (happy) Updated to use voxelData.
+* (happy) Moved phase projection to an external routine.
+* (documentation) Fixed a few more typos.
+
+## Version 3.0.1 (4/23/25)
+* (documentation) I missed a bunch of weird errors in the "Theory of Operation" section.  Are you surprised?  I'm not surprised.  You shouldn't be either.  These are now fixed.  This doesn't change any code - mostly affects online documentation.
+
+## Version 3.0 (4/22/25)
+* (documentation) Added summary of 3.0 changes, fixed a few typos.
+
+## Version 3.0alpha15 (4/22/25)
+* (rapidtide) Fixed a bug in masking logic introduced in last version.
+* (rapidtide) Pullled regressor cleaning steps out into a separate routine.
+* (rapidtide) Removed unused "noiseregressor" code.  Its functionality is now covered with confound regression.
+* (rapidtide) Removed memory profiling code that relied on an unsupported library.
+* (rapidtide) Defined a new class to handle the input data.  This simplifies a lot of internal operations.
+* (happy) Updated deep learning filter training and inference code, and saved models, for better tensorflow 2 compatibility.
+* (docs) Updated installation instructions.
+* (package) Updated copyright notices.
+
+## Version 3.0alpha14 (4/8/25)
+* (rapidtide) Rationalized handling of zero-mean data - now use the ``--dataiszeromean`` argument to tell rapidtide how to make masks.  ``--globalmaskmethod`` no longer exists.
+* (retroregress) Some bugfixes.
+* (atlasaverage) 4D file timecourse output is now a BIDS compliant json/tsv.gz pair, with timecourse labels, if desired.
+* (delayvar) Secret bugfixes.
+* (package) Fixed definition of ``APARC_WHITE`` to add cerebral white matter (oops!).
+* (package) Made it easier to run local tests.
+* (docs) Expanded theory of operation section.
+
+## Version 3.0alpha13 (3/31/27)
+* (rapidtide, retroregress) Preserve the sign of the sLFO filter fit R value (it might be useful for distinguishing arterial blood).
+* (rapidtide) Fixed a bug with --dofinalrefine - now the shiftedtcs file IS written.
+* (delayvar) New secret program, for secret purposes, to satisfy a secret question I had. More later.
+* (package) Clarified that the final sLFO removal filter does NOT use a GLM (the current filter is an OLS filter) by renaming routines and command line options.
+
+## Version 3.0alpha12 (3/19/25)
+* (rapidtide) Added option to perform regressor refinement on last pass.
+* (rapidtide) Moved regressor refinement out into its own class to make things more modular.
+* (refinedelay) Put in some experimental code to do multiderivative delay fits.  Currently doesn't work very well.
+* (tidepool) Changed default colormaps for similarity width, MTT.
+* (package) Made a script to compile qt templates.
+* (package) Added the ability to set value limits to some parser functions.
+
+## Version 3.0alpha11 (3/5/25)
+* (tidepool) Substantial speed improvement switching datasets.
+* (tidepool) Colormap radio button is now set correctly.
+* (tidepool) Mask menu label is now set correctly when restoring a loaded dataset.
+* (versioneer) Updated to 0.29.
+* (docs) tidepool's documentation has been updated to reflect the current state of the program.
+
+## Version 3.0alpha10 (2/28/25)
+* (tidepool) Full support for multiple concurrent datasets.  Dataset loading and selection is now done through the File menu.
+* (tidepool) Load additional informational maps, and somewhat more intelligently.
+* (tidepool) Fixed pane loading to use all available panes.
+* (tidepool) Fixed image saving under pyqt6.
+* (tidepool) For the regressor spectrum, only do FFT of the portion of the regressor used for similarity calculation.
+
+## Version 3.0alpha9 (2/26/25)
+* (rapidtide) Fixed the calculation of the regressor autocorrelation width (used in estimating MTT).
+* (tidepool) First working version that allows loading multiple files. Use ``--dataset DATASET1 DATASET2...``.
+* (tidepool) Added new "big" template to let you see more information at once.  Select with ``--uistyle big``.
+* (tidepool) Pretty significant code cleanup under the hood.
+
+## Version 3.0alpha8 (2/20/25)
+* (rapidtide) Enhanced fit failure reporting.
+* (rapidtide) Fixed map output type for non-float maps.
+* (tidepool) Clarify how you specify the dataset name in the help text.
+* (tidepool) Fixed some typos in outputs.
+* (tidepool) Made some internal changes in preparation for allowing loading multiple files.
+
+## Version 3.0alpha7 (2/11/25)
+* (happy) Trying out some new approaches for aliased correlation.
+* (happy) Put in some initial support for multiecho data.
+* (happy) Updated argument parser.
+* (package) Various modernizations and cleanups.
+
+## Version 3.0alpha6 (1/28/25)
+* (happy) Fixed a major bug in motion filtering (thank you to Sukru Demiral for reporting it!)
+
+## Version 3.0alpha5 (1/25/25)
+* (happy) Fixed a typo in argument description.
+* (atlasaverage) Added the ability to segment a template atlas based on values of the map being summarized.
+* (docs) Significantly beefed up happy section.
+* (reference) Constructed a new version of the JHU LVL1 atlas where each territory is split into an early and late subterritory, based on the median delay in the HCP-YA dataset.
+* (package) Fully converted to using pyproject.toml for packaging.
+
+## Version 3.0alpha4 (1/21/25)
+* (rapidtide, tidepool) Both now only use neglog10p map to dynamically make significance masks.
+* (rapidtide, Docker) rapidtide should now properly report its version number in a container even if it is in prerelease.
+
+## Version 3.0alpha3 (1/16/25)
+* (rapidtide) Refine delay is now on by default.  Use --norefinedelay to disable it.  --refinedelay still exists for compatibility, but does nothing.
+* (rapidtide) Now outputs a map of fit significance (-log10(p)).  In response to https://github.com/bbfrederick/rapidtide/issues/174.
+* (showxcorrx) Fixed some issues with axis labelling.
+
+## Version 3.0alpha2 (12/30/24)
+* (happy, rapidtide) Now do (correct) checking to see if running in a container that now handles both Docker and Singularity/Apptainer properly. Thank you to Derek Monroe (https://github.com/dcmonroe) for the catch and the fix!
+* (package) Now includes codespell checking thanks to Yaroslav O. Halchenko (https://github.com/yarikoptic)!
+
+## Version 3.0alpha1 (12/20/24)
+* (rapidtide) The ``--fixdelay`` option has been split into two options.  ``--initialdelay DELAY`` lets you specify either a float that sets the starting delay for every voxel to that value, or a 3D file specifying the initial delay for each voxel.  ``--nodelayfit`` determines whether the delay can be adjusted from its initial value.  Closes https://github.com/bbfrederick/rapidtide/issues/171. KNOWN ISSUE:  If you supply an initial delay map, instead of using the global mean, rapidtide should use the delays to make your first stage regressor.  Currently that is not the case.
+* (rapidtide) Reorganized command line options and adjusted the default values.
+* (rapidtide) Help output now shows the filter ranges.
+* (rapidtide, retroglm) Added delay refinement using the ratio of the fit coefficients of the regressor and its time derivative.
+* (rapidtide, retroglm) Fixed a bad shared memory leak.
+* (retroglm) Significantly enhanced logging.
+* (retroglm) Added canary files.
+* (rapidtide) Implemented delay map patching.
+* (rapidtide) Write out individual EV timecourses.
+* (Docker) Cleaned up some internal variables.
+* (Docker) Improved build and testing scripts.
+* (io) Added function to compare nifti files with some tolerance.
+* (docs) Automated more table generation.
+* (package) Merged some dependabot PRs.
+* (package) Fixed a fairly big, but not necessarily impactful bug. mlregress returned R2, not R, so anything referring to the R of a fit was actually squared (R was actually R2, R2 was actually R4).  NB: this does NOT affect the calculation of maxcorrsq, which does not use mlregress.
+
+## Version 2.9.9.5 (11/15/24)
+* (deployment) New idea - split the README.rst file to remove potentially offending reference stuff.
+
+## Version 2.9.9.4 (11/15/24)
+* (deployment) Attempt to fix deployment by essentially giving up.
+
+## Version 2.9.9.3 (11/15/24)
+* (deployment) Yet another attempt to fix deployment.
+
+## Version 2.9.9.2 (11/14/24)
+* (rapidtide) Fixed https://neurostars.org/t/indexing-error-during-regressor-refinment/30790
+* (rapidtide) Addressed https://github.com/bbfrederick/rapidtide/issues/175
+* (rapidtide) Added the ability to mask data before spatial filtering.
+* (rapidtide) Revised shared memory access to use more modern interface.
+* (rapidtide) Clarified option descriptions in help output.
+* (Docker) Temporary workaround for https://github.com/bbfrederick/rapidtide/issues/180
+* (deployment) Tried to fix pypi deployment.
+* (showtc) Fixed legends when using multiple input files.
+* (docs) More reference reformatting.
+
+## Version 2.9.9.1 (10/28/24)
+* (rapidtide) Properly set the "_nodefault" flag on "passes".  Should resolve https://github.com/bbfrederick/rapidtide/issues/178.
+* (rapidtide) Terminate despeckling if the number of voxels to despeckle is not changing.
+* (rapidtide,ccorrica) Changed default correlation weighting to "phat".
+* (ccorrica) Output filtered timecourses.
+* (docs) More documentation enhancements by tsalo.
+* (docs) Updated requirements.txt file to reflect recent documentation changes so readthedocs build would complete.
+* (docs) Converted all references to bibtex.
+* (package) Merged some dependabot PRs.
+
+## Version 2.9.9 (10/22/24)
+* (docs) Integrated lots of documentation upgrades from Taylor Salo (tsalo).
+* (rapidtide) Changed correlation mask to use brain mask as correlation mask if provided.
+* (rapidtide) Lowered the default lagminthresh, lagmaxthresh.
+* (rapidtide,happy) Improved creation and deletion of canary files.
+* (dlfilter) Simplified to support only newer versions of tensorflow 2.X and fix some deprecation problems.
+* (atlastool) Fixed 4D processing.
+* (showtc) Allowed display of timecourses with different x axes on the same timeline.
+* (package) Defined a new filter band - "lfo_tight" from 0.01-0.1Hz (matches a lot of papers).
+* (package) Enhanced filter testing.
+* (package) Updated requirements to fix tensorflow installation.
+* (package) Merged some dependabot PRs.
+
+## Version 2.9.8.2 (9/24/24)
+* (package) Pypi gets mad when you redeploy with the same tag number...
+
+## Version 2.9.8.1 (9/24/24)
+* (retrolagtcs) Now only use one mask (corrmask).
+* (retrolagtcs) Now only load the fmri file header to save memory.
+
+## Version 2.9.8 (9/24/24)
+* (retrolagtcs) Made a new program to generate lagged timecourses from a lagmap, masks, and a lagtc generator (for fmripost_rapidtide).
+* (rapidtide) Added coefficient of variation output.
+* (tidepool) Now works with PyQt6.
+* (package) Some import cleanups.
+
+## Version 2.9.7 (9/16/24)
+* (package) Updated requirements for matplotlib and pyqtgraph to make sure tidepool works (thanks to Hui Zheng for finding this - resolves https://github.com/bbfrederick/rapidtide/issues/168).
+* (package) Dropped Python 3.8 support (not supported by the version of pyqtgraph I need).
+* (filter.py) You can now specify padtype to all filters.
+* (reference) Added the newest version of the HCP-YA mean parameter maps.
+
+## Version 2.9.6 (9/5/24)
+* (rapidtide) Estimate and save information about sLFO signal growth over the course of a scan.
+* (rapidtide) Now you can have both include and exclude tmasks.
+* (rapidtide) Fixed some bugs in memory profiling.
+* (rapidtide) Removed some extraneous code to save memory.
+
+## Version 2.9.5.2 (8/14/24)
+* (package) Deployment fix
+
+## Version 2.9.5.1 (8/14/24)
+* (rapidtide) Backed off on using the gray matter mask to limit refine voxels.
+
+## Version 2.9.5 (8/14/24)
+* (rapidtide) Now specifying brainmask and/or graymattermask will automatically do smart processing enhancements.  You can specify whitemattermask, but that currently does nothing except pass the map along.
+* (rapidtide) pickleft is now the default (you never don't want to do it).  The argument to specify it does nothing, but doesn't throw an error.  You can turn it off with nopickleft (but, seriously, don't).
+* (package) In addition to the APARC label macros for specifying atlas values, I've added SSEG_GRAY and SSEG_WHITE to support gray and white mask generation from SynthSeg output.
+* (package) Fixed a rarely encountered but serious bug when reading tsv files with missing values - these are now converted to zeros on read rather than propagating NaN's through processing.
+
+## Version 2.9.4.1 (8/7/24)
+* (package) Deployment fix
+
+## Version 2.9.4 (8/7/24)
+* (rapidtide) Added "--graymattermask" macro to set region for global mean, refinement, and offset calculations.
+* (rapidtide) Added whitemattermask input.
+* (rapidtide) Calculate normalized motion derivatives when denoising.
+* (filttc) Various improvements.
+* (docs) Automated calculation of rapidtide data output sizes.
+* (package) Multiple buffs and improvements to packaging and installation files.
+* (package) Merged many dependabot PRs.
+
+## Version 2.9.3 (6/15/24)
+* (rapidtide) Aligned names of histograms with the maps they summarize.
+* (rapidtide) Renamed ``--awsmode`` to ``--savecorrout``.
+* (docs) Updated file output table.
+
+## Version 2.9.2.2 (6/15/24)
+* (rapidtide) Added ``--awsmode`` to force the output of the corrout file independent of output level.
+* (rapidtide) When doing confound filtering, output a histogram of filter R2 values.
+
+## Version 2.9.2.1 (6/14/24)
+* (rapidtide) Bugfixes, including more graceful handling of null confound regressors.
+* (resampletc) Prepping for some additional features.
+
+## Version 2.9.2 (6/12/24)
+* (rapidtide-cloud) Made nda-download-data take a dataset name.
+
+## Version 2.9.1 (6/12/24)
+* (rapidtide) Made some tweaks to confound regression.
+* (rapidtide) Fixed a logging error when doing noise regressor cleaning.
+* (rapidtide2std) Also register confoundfilter R2 map.
+* (io) Added the ability to read in FSL design.mat file as multicolumn text files.
+* (qualitycheck) Added some new metrics.
+
 ## Version 2.9.0 (6/3/24)
 * (rapidtide) Inband variance maps (Before, After, Change) are now always output if a GLM is performed.
 * (rapidtide) Tuned outputlevel configurations.  Added a new level, "less".
 * (rapidtide) Fixed globallaghist output.
 * (rapidtide2std) Updated for new file names, added option to transform GLM filtered data.
 * (fixtr) New utility to change the TR in a nifti header.
-* (reference) Made a new lut for JHU LVL1 NoVent to try to highlight heirarchy.
+* (reference) Made a new lut for JHU LVL1 NoVent to try to highlight hierarchy.
 * (package) Found and fixed a lot of weird, rare bugs (mostly typos).
 
 ## Version 2.8.9.2 (5/22/24)
@@ -22,7 +462,7 @@
 * (package) Merged some dependabot PRs.
 
 ## Version 2.8.9 (5/17/24)
-* (rapidtide) Simplified specification of output files.  Now use "--outputlevel" with values "min", "normal", "more", or "max" to specify what files are output.
+* (rapidtide) Simplified specification of output files.  Now use ``--outputlevel`` with values "min", "normal", "more", or "max" to specify what files are output.
 * (rapidtide) Improved motion regression and made it more flexible.
 * (rapidtide) Merged all bids nifti file writes into a common output routine.
 * (retroglm, rapidtide) Factored out all the GLM calculation code so it can be done (or redone with different options) after the fact with "retroglm" as a separate step.
@@ -38,7 +478,7 @@
 * (rapidtide) Added new option to start from a random probe regressor.
 * (rapidtide) Moved performance options into their own section.
 * (rapidtide) Cleaned up code that reads (or rereads) data prior to GLM.
-* (rapidtide) You can specify MKL threads AND multiprocessing - multithreading is disabled and reenabled automatically as needed.
+* (rapidtide) You can specify MKL threads AND multiprocessing - multithreading is disabled and re-enabled automatically as needed.
 * (rapidtide) Do refinement on padded data, to infer data past the ends of the imaging window.
 * (rapidtide) Save the padded, lagged timecourse generator.
 * (rapidtide) Scale voxel timecourses prior to PCA refinement.
@@ -67,7 +507,7 @@
 ## Version 2.8.6 (4/5/24)
 * (rapidtide) Tweaked the behavior of the ``--CVR`` flag.
 * (rapidtide) Made major improvements to motion regression.
-* (rapidtide) Consolodated all glm filtering into a single multiprocessing routine, added some new capabilities to rapidtide GLM filtering.
+* (rapidtide) Consolidated all glm filtering into a single multiprocessing routine, added some new capabilities to rapidtide GLM filtering.
 * (resampletc) Renamed from resamp1tc to make the program names more consistent.
 * (package) Made pyfftw an optional dependency, since it seems to be the only thing blocking python 3.12 compatibility.
 * (package) Added some new tests.
@@ -82,7 +522,7 @@
 
 ## Version 2.8.5 (3/30/24)
 * (rapidtide) Adjusted some default parameters to reflect the current best picks.
-* (rapidtide) Fixed the --denoising option (it didn't actually do anything!)
+* (rapidtide) Fixed the ``--denoising`` option (it didn't actually do anything!)
 * (package) Partially implemented a major reorganization of all the programs in the package to make them workflows with standard interfaces.
 * (docs) Started the process of standardizing the program descriptions and properly using autodoc.
 
@@ -93,7 +533,7 @@
 * (package) Accepted several dependabot changes.
 
 ## Version 2.8.3 (3/7/24)
-* (rapidtide) Fixed the logic for saving lagregressors - they only exist if you do GLM or CVR analysis, so if you set nolimitoutput, check for existance first (thanks to Laura Murray for finding this bug).
+* (rapidtide) Fixed the logic for saving lagregressors - they only exist if you do GLM or CVR analysis, so if you set nolimitoutput, check for existence first (thanks to Laura Murray for finding this bug).
 * (rapidtide) Changed the name of the file containing the voxel specific EVs that are regressed out by the GLM from "lagregressors_bold" to "lfofilterEVs_bold" (thanks to Tianye Zhai for flagging this).
 * (localflow) Added a new program to test a hunch.
 * (fit) Gracefully handle singular matrices in mlregress.
@@ -116,7 +556,7 @@
 * (cloud) Added support for selecting the dataset  (currently HCPA and ABCD are supported).
 
 ## Version 2.7.8 (1/31/24)
-* (rapidtide) Added new feature - '--numtozero NUMPOINTS' allows you to specify how many points at the beginning of the data set to set to zero prior to processing.  This means that the sLFO fit does not get contaminated by synchronous noise at the beginning of the timecourse (such as T1 decay).  The initial timepoints are filled in from timecourses shifted forward in time.  This means better correlation of timecourses with the sLFO, and better noise removal with the GLM.
+* (rapidtide) Added new feature - ``--numtozero NUMPOINTS`` allows you to specify how many points at the beginning of the data set to set to zero prior to processing.  This means that the sLFO fit does not get contaminated by synchronous noise at the beginning of the timecourse (such as T1 decay).  The initial timepoints are filled in from timecourses shifted forward in time.  This means better correlation of timecourses with the sLFO, and better noise removal with the GLM.
 * (rapidtide) Fixed a bug in how setting timerange and simcalc range interacted (and in range checking).  It all works now, and simcalc range is specified relative to the restricted time range.
 * (runqualitycheck) Fixed some masking bugs.
 
@@ -246,7 +686,7 @@
 * (Docker) Set memory limits on resource use when running in Docker containers so you don't get silent out of memory failures.
 
 ## Version 2.6.1 (8/17/23)
-* (rapidtide) Fixed crash when using --acfix option.  Thanks to Jakub Szewczyk for spotting this.  Should resolve https://github.com/bbfrederick/rapidtide/issues/115.
+* (rapidtide) Fixed crash when using ``--acfix`` option.  Thanks to Jakub Szewczyk for spotting this.  Should resolve https://github.com/bbfrederick/rapidtide/issues/115.
 * (atlasaverage) Added text region summary outputs.
 * (atlastool) Enhancing spatial registration options.
 * (package) Initial steps to implementing a more flexible way of applying external registration tools to data.
@@ -254,7 +694,7 @@
 * (Docker) Updated to basecontainer 0.2.1 and added new cleanup operations - the container is now ~30% smaller.
 
 ## Version 2.6.0 (8/10/23)
-* (rapidtide) Added new "--CVR" analysis type to generate calibrated CVR maps when given a CO2 regressor as input.  Thanks to Kristina Zvolanek for the suggestion to add it!
+* (rapidtide) Added new ``--CVR`` analysis type to generate calibrated CVR maps when given a CO2 regressor as input.  Thanks to Kristina Zvolanek for the suggestion to add it!
 * (rapidtide) Fixed calculation and output of variance change after GLM filtering.
 * (happy) Moved support functions into a separate file.
 * (simdata) Added separate voxel level and volume level noise specification, and a test script.
@@ -263,7 +703,7 @@
 * (package) Removed Python 3.7 support (mostly because it doesn't support all the features of f-strings I use.)
 
 ## Version 2.5.8 (8/3/23)
-* (rapidtide) --nofitfilt now actually works.  Thank you to https://github.com/poeplau for finding (and fixing) the problem!  Resolves https://github.com/bbfrederick/rapidtide/issues/114
+* (rapidtide) ``--nofitfilt`` now actually works.  Thank you to https://github.com/poeplau for finding (and fixing) the problem!  Resolves https://github.com/bbfrederick/rapidtide/issues/114
 
 ## Version 2.5.7 (5/15/23)
 * (glmfilt) Added ability to specify a mask, and to limit output files.
@@ -277,21 +717,21 @@
 * (package) Modernized install procedure.
 
 ## Version 2.5.4 (5/10/23)
-* (rapidtide) Default to using N processors rather than N-1 when nprocs=-1.  You can toggle old behavior with --reservecpu.
+* (rapidtide) Default to using N processors rather than N-1 when nprocs=-1.  You can toggle old behavior with ``--reservecpu``.
 * (rapidtide-cloud) Rapidtide will record the instance type if running on AWS in the options file (AWS_instancetype).
 
 ## Version 2.5.3.1 (5/9/23)
 * (rapidtide, happy) Fixed a crash when you DIDN'T specify informational tags (SMH).
 
 ## Version 2.5.3 (5/9/23)
-* (rapidtide, happy) Added the ability to save arbitrary informational tags to the run options (or info) json files using the --infotag command line argument.
+* (rapidtide, happy) Added the ability to save arbitrary informational tags to the run options (or info) json files using the ``--infotag`` command line argument.
 
 ## Version 2.5.2 (5/8/23)
 * (rapidtide) Now allow the global mean mask to be completely outside of the correlation mask (the fact this previously wasn't allowed was a bug).  Thank you to Daniele Marinazzo for finding this.
 * (rapidtide) Fixed a bug in formatting run timings.
 * (filttc) Now allow normalization before or after filtering.
 * (showxcorrx) Made fit width limits configurable.
-* (calcicc) Moved main calculations into niftistats, made two shells to calculate either icc or ttests.
+* (calcicc) Moved main calculations into niftistats, made two shells to calculate either icc or tests.
 * (package) Disabled numba because of multiple bugs and incompatibility with py3.11 and ARM.
 * (package) Made some updates to rapidtide cloud routines to make things a bit more stable.
 
@@ -314,7 +754,7 @@
 * (docs) Removed duplicate funding source.  Hopefully this will resolve the Pypi upload issue.
 
 ## Version 2.4.5 (4/10/23)
-* (docs) Addded some new sections to theory.
+* (docs) Added some new sections to theory.
 * (package) Completely changed the way I handle and distribute test data.  This makes the package much smaller (~17M), which should fix pypi deployment.  This involved several changes to the Docker and circleCI workflows, which I think are now stable.
 
 ## Version 2.4.4 (3/30/23)
@@ -329,7 +769,7 @@
 * (package) Several changes to fix the build environment.
 
 ## Version 2.4.2 (2/8/23)
-* (rapidtide) Added ability set a threshold value for "equivalence" of spatial dimensions of NIFTI files (rather than requiring an exact match) using the --spatialtolerance option.
+* (rapidtide) Added ability set a threshold value for "equivalence" of spatial dimensions of NIFTI files (rather than requiring an exact match) using the ``--spatialtolerance`` option.
 * (rapidtide) Added "offset masks" to set the region that defines "zero" time offset.
 * (fingerprint) Added several new summary statistics for each region.
 * (fingerprint) Allow the use of 3D masks with 4D data.
@@ -347,7 +787,7 @@
 * (Docker) Build python environment with pip rather than conda now.
 
 ## Version 2.4.0 (10/6/22)
-* (rapidtide) Added enhanced variance removal assesment.
+* (rapidtide) Added enhanced variance removal assessment.
 * (rapidtide) Fixed a rare crashing bug in proctiminglogfile.
 * (rapidtide) Output some files indicating run status.
 * (package) Fixed a deprecation warning in pearsonr.
@@ -356,7 +796,7 @@
 ## Version 2.3.1 (9/27/22)
 * (Dockerfile) Some tweaks to package versions to try to eliminate error messages.
 * (Dockerfile) Add some AWS libraries to facilitate using S3 volumes.
-* (Dockerfile) Moved timezone data loading earlier in the file to accomodate the new libraries.
+* (Dockerfile) Moved timezone data loading earlier in the file to accommodate the new libraries.
 * (reference) Added HCP_negmask_2mm to improve map display.
 * (github) Updated codeql actions to v2.
 
@@ -395,10 +835,10 @@
 
 ## Version 2.2.5 (4/26/22)
 * (rapidtide) Postprocess timing information to make it more useful.
-* (rapidtide) Reenabled numba by default.
+* (rapidtide) Re-enabled numba by default.
 * (fingerprint) Fixed handling of 4D atlases, empty regions, and 4D masks.  Added "constant" template, and allow 0th order processing (mean).
 * (atlastood) Fixed 4D atlas handling.  Now mask atlas after collapsing to 3D.
-* (histnifti) Added --transform flag to map values to percentiles.
+* (histnifti) Added ``--transform`` flag to map values to percentiles.
 
 ## Version 2.2.4 (4/11/22)
 * (fingerprint) Now works properly for 3D input files.
@@ -406,7 +846,7 @@
 * (RapidtideDataset.py) Fixed the default type of "numberofpasses".
 
 ## Version 2.2.3 (4/1/22)
-* (rapidtide) Added a new feature, --globalmeanselect, to try to locate a good, uniform, short delay pool of voxels to use for the initial global mean signal.  This is an attempt to fix the "poison regressor" problem - if the initial regressor contains data from multiple, distinct pools of voxels with different delays, the initial global regressor is strongly autocorrelated, and delay fits become ambiguous.  This cannot be corrected by refinement, so better to avoid it altogether. This option selects only voxels with clear, short delays, after a single pass with despeckling disabled.  The result is a mask (XXXdesc-globalmeanpreselect_mask.nii.gz) that can be used with --globalmeanincludemask for a subsequent run.
+* (rapidtide) Added a new feature, ``--globalmeanselect``, to try to locate a good, uniform, short delay pool of voxels to use for the initial global mean signal.  This is an attempt to fix the "poison regressor" problem - if the initial regressor contains data from multiple, distinct pools of voxels with different delays, the initial global regressor is strongly autocorrelated, and delay fits become ambiguous.  This cannot be corrected by refinement, so better to avoid it altogether. This option selects only voxels with clear, short delays, after a single pass with despeckling disabled.  The result is a mask (XXXdesc-globalmeanpreselect_mask.nii.gz) that can be used with ``--globalmeanincludemask`` for a subsequent run.
 * (rapidtide) Fixed a nasty bug that caused offsettime and lagminthresh to interact incorrectly, sometimes leading to almost no voxels for refinement.
 * (happy) Moved some code around, changed some internal names, and added secret bits to support future, secret, features.
 * (tidepool) Trying to add a little more clarity to the user about image orientation (the image's affine transform is correct, so the mapping between voxel and MNI coordinate is correct, but currently it's not clear if displayed images are radiological or neurological orientation.
@@ -416,7 +856,7 @@
 * (pony) One time offer, today only - every user gets a pony upon request!
 
 ## Version 2.2.2 (3/16/22)
-* (happy, happy_legacy, simdata) This release corrects a flaw (or perhaps more accurately an ambiguity) in slice time specification.  In FSL slicetime files, slicetimes are specified in fractions of a TR. In .json sidecars, they are specified in seconds. This is now detected on file read, and slicetime files are now converted to seconds.  Until now, happy and simdata assumed all slice times were in seconds.  This will fix behavior when FSL-style (fractional TR) slicetime files are used.  Behavior with .json sidecars is not changed.  Non-json files are assumed to be the FSL style (fractions of a TR) UNLESS the --slicetimesareinseconds flag is used.
+* (happy, happy_legacy, simdata) This release corrects a flaw (or perhaps more accurately an ambiguity) in slice time specification.  In FSL slicetime files, slicetimes are specified in fractions of a TR. In .json sidecars, they are specified in seconds. This is now detected on file read, and slicetime files are now converted to seconds.  Until now, happy and simdata assumed all slice times were in seconds.  This will fix behavior when FSL-style (fractional TR) slicetime files are used.  Behavior with .json sidecars is not changed.  Non-json files are assumed to be the FSL style (fractions of a TR) UNLESS the ``--slicetimesareinseconds`` flag is used.
 
 ## Version 2.2.1 (3/16/22)
 * (rapidtide) Tweaked mask checking logic to address a bug introduced by despeckling changes.
@@ -437,7 +877,7 @@
 * (showtc) Added support for files with large star time offsets.
 * (showxy) Some appearance tweaks.
 * (niftidecomp) Improved mask generation.
-* (variabilityizer) New progam to transform fMRI datasets to variability measures.
+* (variabilityizer) New program to transform fMRI datasets to variability measures.
 
 ## Version 2.1.0 (9/21/21)
 * (spatialmi) Added new program to calculate local mutual information between 3D images.
@@ -497,7 +937,7 @@
 ## Version 2.0 (6/2/21)
 Much thanks to Taylor Salo for his continuing contributions, with several substantive improvements to code, documentation, and automatic testing, and generally helping devise a sensible release roadmap that made this version possible.
 
-This release is a big one - there are many new programs, new capabilities in existing programs, and workflow breaking syntax changes.  However, this was all with the purpose of making a beter package with much more consistent interfaces that allow you to figure out pretty quickly how to get the programs to do exactly what you want.
+This release is a big one - there are many new programs, new capabilities in existing programs, and workflow breaking syntax changes.  However, this was all with the purpose of making a better package with much more consistent interfaces that allow you to figure out pretty quickly how to get the programs to do exactly what you want.
 The biggest change is to rapidtide itself. For several years, there have been two versions of rapidtide; rapidtide2 (the traditional version), and rapidtide2x (the experimental version for testing new features).  When features became stable, I migrated them back to rapidtide2, more and more quickly as time went by, so they became pretty much the same.  I took the 2.0 release as an opportunity to do some cleanup.
 As of now, there is only one version of rapidtide, with two parsers.  If you call "rapidtide", you get the spiffy new option parser and much more rational and consistent option naming and specification.  This is a substantial, but simple, change.
 For compatibility with old workflows, I preserved the old parser, which is called "rapidtide2x_legacy".  This accepts options just as rapidtide2 and rapidtide2x did in version 1.9.6.
@@ -536,7 +976,7 @@ Also - all outputs now conform to BIDS naming conventions to improve compatibili
 * (rapidtide): Any option that takes additional values (numbers, file names, etc.) is now specified as '--option VALUE [VALUE [VALUE...]]' rather than as '--option=VALUE[,VALUE[,VALUE...]]'.
 * (rapidtide): After a lot of use over the years, I've reset a lot of defaults to reflect typical usage.  You can still do any analysis you were doing before, but it may now require changes to scripts and workflows to get the old default behavior.  For most cases you can get good analyses with a minimum set of command line options now.
 * (rapidtide): There are two new macros, --denoise and --delaymapping, which will set defaults to good values for those use cases in subjects without vascular pathology.  Any of the preset values for these macros can be overridden with command line options.
-* (rapidtide, rapidtide2x_legacy): Regressor and data filtering has been changed significantly.  While the nominal filter passbands are the same, the transitions to the stopbands have been tightened up quite a bit.  This is most noticable in the LFO band.  The pasband is still from 0.01-0.15Hz with a trapezoidal rolloff, but the upper stopband now starts at 0.1575Hz instead of 0.20Hz.  The wide transition band was letting in a significant amount of respiratory signal for subjects with low respiratory rates (about half of my subjects seem to breath slower than the nominal adult minimum rate of 12 breaths/minute).
+* (rapidtide, rapidtide2x_legacy): Regressor and data filtering has been changed significantly.  While the nominal filter passbands are the same, the transitions to the stopbands have been tightened up quite a bit.  This is most noticeable in the LFO band.  The pasband is still from 0.01-0.15Hz with a trapezoidal rolloff, but the upper stopband now starts at 0.1575Hz instead of 0.20Hz.  The wide transition band was letting in a significant amount of respiratory signal for subjects with low respiratory rates (about half of my subjects seem to breath slower than the nominal adult minimum rate of 12 breaths/minute).
 * (rapidtide): The -V, -L, -R and -C filter band specifiers have been retired.  Filter bands are now specified with '--filterband XXX', where XXX is vlf, lfo, lfo_legacy, resp, cardiac, or None.  'lfo' is selected by default (LFO band with sharp transition bands). To skip filtering, use '--filterband None'.  '--filterband lfo_legacy' will filter to the LFO band with the old, wide transition bands.
 * (rapidtide): To specify an arbitrary filter, specify the pass freqs with --filterfreqs, and then optionally the stop freqs with --filterstopfreqs (otherwise the stop freqs will be calculated automatically from the pass freqs).
 * (rapidtide): The method for specifying the lag search range has changed.  '-r LAGMIN,LAGMAX' has been removed.  You now use '--searchrange LAGMIN LAGMAX'
@@ -556,10 +996,10 @@ Happy also got a new parser and BIDS outputs.  You can call happy with the old i
 * (happy) Added support for scans where there is circulating contrast.
 
 General Changes to the entire package:
-* (package) Python 2.7 support is now officially ended.  Cleaned out compatiblity code.
+* (package) Python 2.7 support is now officially ended.  Cleaned out compatibility code.
 * (package) Dropped support for python 3.3-3.5 and added 3.9.
 * (package) Made pyfftw and numba requirements.
-* (package) Significantly increased test coverage by including smoke tests (exercise as many code paths as possible to find crashers in neglected code - this is how the above bugs were found).
+* (package) Significantly increased test coverage by including smoke tests (exercise as many code paths as possible to find crashes in neglected code - this is how the above bugs were found).
 * (package) Automated consistent formatting.  black now runs automatically on file updates.
 * (package) General cleanup and rationalization of imports.  isort now runs automatically on file updates.
 * (package) Fixed a stupid bug that surfaced when reading in all columns of a text file as input.
@@ -664,7 +1104,7 @@ Miscellaneous changes:
 * (rapidtide, io) Significant improvement to CIFTI handling - now properly read and write parcellated scalars and time series.
 * (io) Vastly improved reading in arbitrarily large text files.
 * (stats) Fixed a bug in getfracvals when you try to find the maximum value.
-* (package) Began aggressive implementation of smoke tests (excercise as many code paths as possible to find crashers in neglected code - this is how the above bugs were found).
+* (package) Began aggressive implementation of smoke tests (exercise as many code paths as possible to find crashes in neglected code - this is how the above bugs were found).
 * (package) More logging refinement.
 
 ## Version 2.0alpha24 (4/14/21)
@@ -692,7 +1132,7 @@ Miscellaneous changes:
 * (rapidtide) Corrected BIDS naming of intermediate maps.
 
 ## Version 2.0alpha20 (3/28/21)
-* (package) Python 2.7 support is now officially ended.  Cleaned out compatiblity code.
+* (package) Python 2.7 support is now officially ended.  Cleaned out compatibility code.
 * (package) Made pyfftw and numba requirements.
 * (docs) Wrote general description of text input functions, enhanced description of happy, include examples.
 * (style) Began effort with T. Salo to address linter errors and generally improve PEP8 conformance - remove dead code, rationalize imports, improve docstrings, convert class names to CamelCase, use snake_case for functions.
@@ -830,7 +1270,7 @@ Much thanks to Taylor Salo for his continuing contributions, with several substa
 * (rapidtide): Any option that takes additional values (numbers, file names, etc.) is now specified as '--option VALUE [VALUE [VALUE...]]' rather than as '--option=VALUE[,VALUE[,VALUE...]]'.
 * (rapidtide): After a lot of use over the years, I've reset a lot of defaults to reflect typical usage.  You can still do any analysis you were doing before, but it may now require changes to scripts and workflows to get the old default behavior.  For most cases you can get good analyses with a minimum set of command line options now.
 * (rapidtide): There are two new macros, --denoise and --delaymapping, which will set defaults to good values for those use cases in subjects without vascular pathology.  Any of the preset values for these macros can be overridden with command line options.
-* (rapidtide, rapidtide2x): Regressor and data filtering has been changed significantly.  While the nominal filter passbands are the same, the transitions to the stopbands have been tightened up quite a bit.  This is most noticable in the LFO band.  The pasband is still from 0.01-0.15Hz with a trapezoidal rolloff, but the upper stopband now starts at 0.1575Hz instead of 0.20Hz.  The wide transition band was letting in a significant amount of respiratory signal for subjects with low respiratory rates (about half of my subjects seem to breath slower than the nominal adult minimum rate of 12 breaths/minute).
+* (rapidtide, rapidtide2x): Regressor and data filtering has been changed significantly.  While the nominal filter passbands are the same, the transitions to the stopbands have been tightened up quite a bit.  This is most noticeable in the LFO band.  The pasband is still from 0.01-0.15Hz with a trapezoidal rolloff, but the upper stopband now starts at 0.1575Hz instead of 0.20Hz.  The wide transition band was letting in a significant amount of respiratory signal for subjects with low respiratory rates (about half of my subjects seem to breath slower than the nominal adult minimum rate of 12 breaths/minute).
 * (rapidtide): The -V, -L, -R and -C filter band specifiers have been retired.  Filter bands are now specified with '--filterband XXX', where XXX is vlf, lfo, lfo_legacy, resp, cardiac, or None.  'lfo' is selected by default (LFO band with sharp transition bands). To skip filtering, use '--filterband None'.  '--filterband lfo_legacy' will filter to the LFO band with the old, wide transition bands.
 * (rapidtide): To specify an arbitrary filter, use '--filterfreqs LOWERPASS UPPERPASS [LOWERSTOP UPPERSTOP]'.  If you don't specify the stop bands, the stop frequencies are set to 5% below and above LOWERPASS and UPPERPASS, respectively.
 * (rapidtide): The method for specifying the lag search range has changed.  '-r LAGMIN,LAGMAX' has been removed.  You now use '--searchrange LAGMIN LAGMAX'
@@ -874,8 +1314,8 @@ Much thanks to Taylor Salo for his continuing contributions, with several substa
 * (rapidtide2x, showxcorrx): Revised internals to guarantee xcorr scale matches values
 * (rapidtide2x, showxcorrx): Improved fitter performance in edge cases (thin peaks, symmetric around max)
 * (rapidtide2x, showxcorrx): Changed limits to avoid crash when peak is at edge of range
-* (rapidtide2x, showxcorrx): Fixed some (but apparantly not all) dumb errors in calls to null correlation calculations.
-* (rapidtide2x): Implemented workaround for unknown crasher in GLM filtering when nprocs != 1
+* (rapidtide2x, showxcorrx): Fixed some (but apparently not all) dumb errors in calls to null correlation calculations.
+* (rapidtide2x): Implemented workaround for unknown crash in GLM filtering when nprocs != 1
 * (rapidtide2x): Added experimental respiration processing
 * (rapidtide2x): Fixed an uncaught bug in bipolar processing.
 * (rapidtide2x): Setting ampthresh to a negative number between 0 and 1 sets the percentile of voxels to use for refinement
@@ -917,7 +1357,7 @@ Much thanks to Taylor Salo for his continuing contributions, with several substa
 * (tidepool): Removed support for pyqt4
 * (tidepool): Some UI tweaks
 * (tidepool): Added some infrastructure for future support for loading multiple runs
-* (tidepool): New atlases to suport fmriprep default coordinates
+* (tidepool): New atlases to support fmriprep default coordinates
 * (tidepool): Numerous bug fixes
 * (ccorrica): Added the ability to oversample the data prior to crosscorrelation
 * (showtc): Added ability to select a column from a multicolumn file as input.
@@ -1040,7 +1480,7 @@ Much thanks to Taylor Salo for his continuing contributions, with several substa
 * (workflows) Initial creation (work in progress) (tsalo).
 * (testing) Reorganized and fixed - now it actually works! (tsalo).
 * (coverage) Code coverage for testing is now tracked (21% - we can improve significantly with workflows) (tsalo).
-* (rapidtide2, 2x, happy) Finally found (and fixed) the reason for a range of random stalls and slowdowns when running on a cluster.  MKL extensions were silently distributing some numpy calculations over all cores (which means running N jobs running on a cluster tried to use N^2 cores - not good at all...).  The maxiumum number of MKL threads is now settable on the command line, and defaults to 1 (no multiprocessor numpy).  Strangely, this makes everything a little faster in single processor mode, and A LOT faster in multiprocessor mode.
+* (rapidtide2, 2x, happy) Finally found (and fixed) the reason for a range of random stalls and slowdowns when running on a cluster.  MKL extensions were silently distributing some numpy calculations over all cores (which means running N jobs running on a cluster tried to use N^2 cores - not good at all...).  The maximum number of MKL threads is now settable on the command line, and defaults to 1 (no multiprocessor numpy).  Strangely, this makes everything a little faster in single processor mode, and A LOT faster in multiprocessor mode.
 * (tide_funcs.py) tide_funcs.py has been split into filter.py, fit.py, io.py, miscmath.py, resample.py, stats.py, and util.py.  All executables fixed to match.
 * (rapidtide2, 2x) Oversample factor is now set automatically by default to make the correlation timestep 0.5 or less.  This dramatically improves fits for longer TRs (> 1.5 seconds).
 * (rapidtide2, 2x) Moved the major passes (null correlation, correlation, correlation fit, refine, wiener filter and glm) into separate modules for maintainability and to simplify tinkering.

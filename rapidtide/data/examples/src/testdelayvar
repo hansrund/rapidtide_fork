@@ -1,0 +1,13 @@
+#!/bin/bash
+
+delayvar \
+    sub-RAPIDTIDETEST.nii.gz \
+    ../dst/sub-RAPIDTIDETEST \
+    --alternateoutput ../dst/delayvartest \
+    --nprocs -1 \
+    --windowsize 30 \
+    --systemicfittype pca \
+    --pcacomponents 0.8 \
+    --outputlevel max \
+    --focaldebug \
+    --windelayoffsetspatialfilt 3

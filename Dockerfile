@@ -5,46 +5,91 @@ FROM fredericklab/basecontainer_plus:latest-release
 ARG BUILD_TIME
 ARG BRANCH
 ARG GITVERSION
+ARG GITDIRECTVERSION
 ARG GITSHA
 ARG GITDATE
 
 # set and echo environment variables
-ENV BUILD_TIME $BUILD_TIME
-ENV BRANCH $BRANCH
+ENV BUILD_TIME=$BUILD_TIME
+ENV BRANCH=$BRANCH
 ENV GITVERSION=${GITVERSION}
 ENV GITSHA=${GITSHA}
 ENV GITDATE=${GITDATE}
+ENV GITDIRECTVERSION=${GITDIRECTVERSION}
 
 RUN echo "BRANCH: "$BRANCH
 RUN echo "BUILD_TIME: "$BUILD_TIME
 RUN echo "GITVERSION: "$GITVERSION
 RUN echo "GITSHA: "$GITSHA
 RUN echo "GITDATE: "$GITDATE
+RUN echo "GITDIRECTVERSION: "$GITDIRECTVERSION
 
-# Install rapidtide
+# security patches
+#RUN uv pip install "cryptography>=46.0.4" "urllib3>=2.6.3" "certifi>=2026.1.4"
+
+# Copy rapidtide into container
 COPY . /src/rapidtide
+RUN ln -s /src/rapidtide/cloud /
 RUN echo $GITVERSION > /src/rapidtide/VERSION
+
+# update the environment, install optionals
+ENV QEMU_CPU=max
+ENV PIP_NO_BUILD_ISOLATION=0
+RUN pip install --upgrade uv
+RUN uv pip install --upgrade "setuptools>=70" --no-cache-dir
+RUN uv pip install --upgrade pip
+RUN uv pip install --upgrade distlib
+RUN uv pip install --upgrade pytest
+RUN uv pip install --upgrade numba
+RUN uv pip install --upgrade pyfftw
+
+# init and install rapidtide
 RUN cd /src/rapidtide && \
-    pip install . && \
-    versioneer install --no-vendor && \
-    rm -rf /src/rapidtide/build /src/rapidtide/dist
+    uv pip install .[test]
+RUN chmod -R a+r /src/rapidtide
+
+# clean up install directories
+RUN rm -rf /src/rapidtide/build /src/rapidtide/dist
+
+# install test data
 RUN cd /src/rapidtide/rapidtide/data/examples/src && \
     ./installtestdatadocker
 
+# update the paths to libraries
+RUN ldconfig
+
 # clean up
-#RUN mamba clean -y --all
 RUN pip cache purge
+RUN uv cache clean
+RUN mamba clean --all
 
 # Create a shared $HOME directory
-RUN useradd -m -s /bin/bash -G users rapidtide
-WORKDIR /home/rapidtide
+ENV USER=rapidtide
+RUN useradd \
+    --create-home \
+    --shell /bin/bash \
+    --groups users \
+    --home /home/$USER \
+    $USER
+RUN chown -R $USER /src/$USER
+
+WORKDIR /home/$USER
 ENV HOME="/home/rapidtide"
 
-ENV IS_DOCKER_8395080871=1
+# set to non-root user
+USER rapidtide
 
-RUN ldconfig
+# initialize user mamba
+RUN /opt/miniforge3/bin/mamba shell init --shell bash
+RUN echo "mamba activate science" >> /home/rapidtide/.bashrc
+
+# set up variable for non-interactive shell
+ENV PATH=/opt/miniforge3/envs/science/bin:/opt/miniforge3/condabin:.:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ENV RUNNING_IN_CONTAINER=1
+
 WORKDIR /tmp/
-RUN ln -s /src/rapidtide/cloud /
+
 ENTRYPOINT ["/cloud/mount-and-run"]
 
 LABEL org.label-schema.build-date=$BUILD_TIME \

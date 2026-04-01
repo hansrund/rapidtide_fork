@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -20,12 +20,39 @@ import argparse
 import glob
 import os
 import sys
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import rapidtide.externaltools as tide_exttools
 import rapidtide.io as tide_io
 
 
-def _get_parser():
+def _get_parser() -> Any:
+    """
+    Create and configure an argument parser for the rapidtide2std command-line tool.
+
+    This function sets up an `argparse.ArgumentParser` with specific arguments
+    required for registering rapidtide output maps to standard space. It supports
+    various options for controlling the transformation process, including linear
+    vs. nonlinear registration, file selection, and debugging output.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser with all required and optional arguments.
+
+    Notes
+    -----
+    The parser is designed for use with the `rapidtide2std` command-line tool.
+    It expects three mandatory positional arguments: `inputfileroot`, `outputdir`,
+    and `featdirectory`. Additional optional arguments control the behavior of the
+    registration process.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args()
+    """
     # get the command line parameters
     parser = argparse.ArgumentParser(
         prog="rapidtide2std",
@@ -56,6 +83,13 @@ def _get_parser():
         dest="clean",
         action="store_true",
         help=("Also transform the cleaned data file (warning - file may be huge)."),
+        default=False,
+    )
+    parser.add_argument(
+        "--confound",
+        dest="confound",
+        action="store_true",
+        help=("Transform the counfound fit R2 map (if present)."),
         default=False,
     )
     parser.add_argument(
@@ -104,7 +138,76 @@ def _get_parser():
     return parser
 
 
-def rapidtide2std(args):
+def rapidtide2std(args: Any) -> None:
+    """
+    Transform RapidTide output maps and timecourses to standard (MNI) or high-resolution (T1) space.
+
+    This function performs spatial normalization of RapidTide-derived functional and anatomical
+    maps using FSL's FLIRT and FNIRT tools. It supports both linear and nonlinear transformations
+    depending on the presence of warp files and user-specified options. The function processes
+    all relevant output files from a RapidTide analysis and applies the appropriate transformation
+    to align them with either the standard MNI152 template or the high-resolution T1-weighted image.
+
+    Parameters
+    ----------
+    args : Any
+        An object containing command-line arguments. Expected attributes include:
+        - debug : bool, optional
+            Enable debug output.
+        - featdirectory : str
+            Path to the FEAT directory containing registration files.
+        - aligntohires : bool, optional
+            Align to high-resolution space instead of standard space.
+        - forcelinear : bool, optional
+            Force linear transformation even if warp file is present.
+        - onefilename : str, optional
+            Process a single input file instead of all files in the dataset.
+        - outputdir : str
+            Output directory for transformed files.
+        - inputfileroot : str
+            Root name for input files.
+        - corrout : bool, optional
+            Include corrout_info map in output.
+        - clean : bool, optional
+            Include lfofilterCleaned_bold map in output.
+        - confound : bool, optional
+            Include confoundfilterR2_map in output.
+        - sequential : bool, optional
+            Run commands sequentially instead of in parallel.
+        - preponly : bool, optional
+            Only print commands without executing them.
+
+    Returns
+    -------
+    None
+        This function does not return any value. It performs file I/O and system calls
+        to transform and copy files to the specified output directory.
+
+    Notes
+    -----
+    The function expects the FSL environment variable FSLDIR to be set. It uses the
+    example_func2highres.mat or example_func2standard.mat transformation matrix and
+    the corresponding warp file (if present) to perform the spatial normalization.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     debug=False,
+    ...     featdirectory='/path/to/feat',
+    ...     aligntohires=False,
+    ...     forcelinear=False,
+    ...     onefilename=None,
+    ...     outputdir='output',
+    ...     inputfileroot='sub-01_task-rest',
+    ...     corrout=True,
+    ...     clean=False,
+    ...     confound=False,
+    ...     sequential=False,
+    ...     preponly=False
+    ... )
+    >>> rapidtide2std(args)
+    """
     if args.debug:
         print(args)
 
@@ -180,8 +283,10 @@ def rapidtide2std(args):
 
     thefmrimaps = [
         "desc-maxtime_map",
+        "desc-maxtimerefined_map",
         "desc-timepercentile_map",
         "desc-maxcorr_map",
+        "desc-maxcorrrefined_map",
         "desc-maxwidth_map",
         "desc-MTT_map",
         "desc-corrfit_mask",
@@ -203,6 +308,9 @@ def rapidtide2std(args):
 
     if args.clean:
         thefmrimaps.append("desc-lfofilterCleaned_bold")
+
+    if args.confound:
+        thefmrimaps.append("desc-confoundfilterR2_map")
 
     absname = os.path.abspath(thefileroot)
     thepath, thebase = os.path.split(absname)

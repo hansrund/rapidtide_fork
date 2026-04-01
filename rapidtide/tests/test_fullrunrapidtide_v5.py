@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -19,30 +19,35 @@
 import os
 
 import matplotlib as mpl
+import pytest
 
-import rapidtide.workflows.rapidtide as rapidtide_workflow
-import rapidtide.workflows.rapidtide_parser as rapidtide_parser
-from rapidtide.tests.utils import get_examples_path, get_test_temp_path
+from rapidtide.tests.utils import get_example_and_temp_roots, run_rapidtide
+
+pytestmark = pytest.mark.slow
 
 
-def test_fullrunrapidtide_v5(debug=False, displayplots=False):
+def test_fullrunrapidtide_v5(debug=False, local=False, displayplots=False):
+    # set input and output directories
+    exampleroot, testtemproot = get_example_and_temp_roots(local)
+
     # run rapidtide
     inputargs = [
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_cifti.ptseries.nii"),
-        os.path.join(get_test_temp_path(), "sub-RAPIDTIDETEST5"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_cifti.ptseries.nii"),
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST5"),
         "--nprocs",
-        "-1",
+        "2",
         "--passes",
         "2",
         "--numnull",
-        "0",
+        "10000",
         "--pickleft",
+        "--norefinedelay",
         "--refineprenorm",
         "None",
     ]
-    rapidtide_workflow.rapidtide_main(rapidtide_parser.process_args(inputargs=inputargs))
+    run_rapidtide(inputargs)
 
 
 if __name__ == "__main__":
     mpl.use("TkAgg")
-    test_fullrunrapidtide_v5(debug=True, displayplots=True)
+    test_fullrunrapidtide_v5(debug=True, local=True, displayplots=True)

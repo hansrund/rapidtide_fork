@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -21,8 +21,11 @@ import copy
 import platform
 import sys
 import time
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.stats import ttest_ind, ttest_rel
 from tqdm import tqdm
 
@@ -33,7 +36,44 @@ import rapidtide.util as tide_util
 from rapidtide.workflows.parser_funcs import is_float, is_valid_file
 
 
-def _get_parser(calctype="icc"):
+def _get_parser(calctype: str = "icc") -> Any:
+    """
+    Generate an argument parser for ICC or t-test calculation workflows.
+
+    This function creates an `argparse.ArgumentParser` tailored for either
+    calculating per-voxel Intraclass Correlation Coefficient (ICC(3,1)) or
+    performing per-voxel t-tests on 4D NIfTI images.
+
+    Parameters
+    ----------
+    calctype : str, optional
+        Type of calculation to perform. Either "icc" for ICC(3,1) or "ttest"
+        for t-test. Default is "icc".
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser for the specified calculation type.
+
+    Raises
+    ------
+    ValueError
+        If `calctype` is not "icc" or "ttest".
+
+    Notes
+    -----
+    The parser supports both required and optional arguments depending on
+    the calculation type. For ICC, an additional `measurementlist` argument
+    is required. For t-test, optional arguments such as `--paired` and
+    `--alternative` are available.
+
+    Examples
+    --------
+    >>> parser = _get_parser("icc")
+    >>> args = parser.parse_args(["file1.nii", "file2.nii", "output_root"])
+    >>> parser = _get_parser("ttest")
+    >>> args = parser.parse_args(["file1.nii", "file2.nii", "output_root"])
+    """
     if calctype == "icc":
         parser = argparse.ArgumentParser(
             prog="calcicc",
@@ -161,7 +201,55 @@ def _get_parser(calctype="icc"):
     return parser
 
 
-def parsemeasurementlist(measlist, numfiles, debug=False):
+def parsemeasurementlist(measlist: Any, numfiles: Any, debug: bool = False) -> None:
+    """
+    Parse a measurement list to extract file and volume indices from string components.
+
+    This function processes a 2D array of strings, where each string contains either
+    one or two comma-separated integers representing file and volume indices. It
+    validates the indices against the number of available files and returns two
+    arrays of the same shape as `measlist` containing the parsed file and volume
+    indices.
+
+    Parameters
+    ----------
+    measlist : array-like
+        A 2D array of strings, where each string represents a measurement entry.
+        Each entry can contain one or two comma-separated integers:
+        - One integer: interpreted as volume index (file index defaults to 0)
+        - Two integers: interpreted as file index and volume index
+    numfiles : int
+        The total number of available files. Used to validate file indices.
+    debug : bool, optional
+        If True, prints debug information for each parsed element. Default is False.
+
+    Returns
+    -------
+    tuple of ndarray
+        A tuple containing two 2D arrays of integers:
+        - `filesel`: File indices parsed from `measlist`
+        - `volumesel`: Volume indices parsed from `measlist`
+
+    Notes
+    -----
+    - Entries in `measlist` must be strings that can be split by commas.
+    - File indices are validated to ensure they do not exceed `numfiles - 1`.
+    - If an entry has more than one comma, the function will exit with an error.
+    - The function prints error messages and exits if invalid input is detected.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> measlist = np.array([['0,5', '1,3'], ['2', '0,7']])
+    >>> numfiles = 5
+    >>> filesel, volumesel = parsemeasurementlist(measlist, numfiles)
+    >>> print(filesel)
+    [[0 1]
+     [2 0]]
+    >>> print(volumesel)
+    [[5 3]
+     [2 7]]
+    """
     nummeas, numsubjs = measlist.shape[0], measlist.shape[1]
     filesel = np.zeros((nummeas, numsubjs), dtype=int)
     volumesel = np.zeros((nummeas, numsubjs), dtype=int)
@@ -189,7 +277,53 @@ def parsemeasurementlist(measlist, numfiles, debug=False):
     return filesel, volumesel
 
 
-def makdcommandlinelist(arglist, starttime, endtime, extra=None):
+def makdcommandlinelist(
+    arglist: Any, starttime: Any, endtime: Any, extra: Optional[Any] = None
+) -> None:
+    """
+    Create a list of command line information for processing logs.
+
+    This function generates diagnostic information about a processing run including
+    timestamps, version information, and the command that was executed.
+
+    Parameters
+    ----------
+    arglist : Any
+        List of command line arguments that were used to invoke the process
+    starttime : Any
+        Start time of the process, typically a timestamp
+    endtime : Any
+        End time of the process, typically a timestamp
+    extra : Any, optional
+        Additional information to include in the output, by default None
+
+    Returns
+    -------
+    list of str
+        List containing diagnostic lines including:
+        - Processing date and time
+        - Processing duration
+        - Version and system information
+        - Extra information (if provided)
+        - The original command line
+
+    Notes
+    -----
+    The function uses `time.strftime` to format the start time and calculates
+    the processing duration as the difference between endtime and starttime.
+    The version information is retrieved using `tide_util.version()`.
+
+    Examples
+    --------
+    >>> arglist = ['python', 'script.py', '--input', 'data.txt']
+    >>> starttime = time.time() - 10
+    >>> endtime = time.time()
+    >>> makdcommandlinelist(arglist, starttime, endtime)
+    ['# Processed on Mon, 01 Jan 2024 12:00:00 UTC.',
+     '# Processing took 10.000 seconds.',
+     '# Using hostname (1.0.0, 2024-01-01)',
+     'python script.py --input data.txt']
+    """
     # get the processing date
     dateline = (
         "# Processed on "
@@ -226,7 +360,43 @@ def makdcommandlinelist(arglist, starttime, endtime, extra=None):
         return [dateline, timeline, nodeline, commandline]
 
 
-def niftistats_main(calctype="icc"):
+def niftistats_main(calctype: str = "icc") -> None:
+    """
+    Main function for computing intraclass correlation (ICC) or two-sample t-test on NIfTI files.
+
+    This function processes NIfTI data files to compute either an intraclass correlation (ICC)
+    or a two-sample t-test across subjects and measurements. It supports reading data from
+    multiple NIfTI files, applying smoothing, masking, and performing statistical analysis
+    voxel-wise. The results are saved as NIfTI files with corresponding statistics.
+
+    Parameters
+    ----------
+    calctype : str, optional
+        Type of statistical calculation to perform. Options are:
+        - "icc": Compute intraclass correlation (default)
+        - "ttest": Compute two-sample t-test
+        Default is "icc".
+
+    Returns
+    -------
+    None
+        This function does not return a value but saves output NIfTI files and a command-line
+        log file to disk.
+
+    Notes
+    -----
+    For ICC calculation:
+        - Requires at least two measurements per subject.
+        - Outputs ICC, variance components, and session effect F-statistic.
+    For t-test calculation:
+        - Requires exactly two measurements.
+        - Outputs t-statistic and p-value.
+
+    Examples
+    --------
+    >>> niftistats_main(calctype="icc")
+    >>> niftistats_main(calctype="ttest")
+    """
     try:
         args = _get_parser(calctype=calctype).parse_args()
     except SystemExit:
@@ -239,9 +409,9 @@ def niftistats_main(calctype="icc"):
     numfiles = len(datafiles)
 
     if calctype == "icc":
-        measlist = tide_io.readvecs(args.measurementlist, thedtype=str)
+        measlist = tide_io.readvecs(args.measurementlist, thedtype=np.dtype(str))
         print(f"measurementlist shape: {measlist.shape}")
-        (nummeas, numsubjs) = measlist.shape[0], measlist.shape[1]
+        nummeas, numsubjs = measlist.shape[0], measlist.shape[1]
         if nummeas < 2:
             print(
                 "ICC requires at least two measurements per subject - specify at least two measurements."
@@ -270,9 +440,9 @@ def niftistats_main(calctype="icc"):
             print(f"data file {i + 1} does not match first file")
             sys.exit()
     xsize, ysize, numslices, dummy = dimlist[0]
+    xdim, ydim, slicethickness, dummy = sizelist[0]
     if calctype == "ttest":
         numsubjs = dimlist[0][3]
-    xdim, ydim, slicethickness, dummy = sizelist[0]
     print(f"{numsubjs=}, {nummeas=}")
 
     # now read in the data
@@ -342,9 +512,9 @@ def niftistats_main(calctype="icc"):
         print("done reading in mask array")
     else:
         if calctype == "icc":
-            datamask_data = datafile_data[:, :, :, 0] * 0.0 + 1.0
+            datamask_data = np.ones_like(datafile_data[:, :, :, 0])
         elif calctype == "ttest":
-            datamask_data = datafile_data[:, :, :, 0, 0] * 0.0 + 1.0
+            datamask_data = np.ones_like(datafile_data[:, :, :, 0, 0])
 
     # now reformat from x, y, z, time to voxelnumber, measurement, subject
     numvoxels = int(xsize) * int(ysize) * int(numslices)
@@ -432,11 +602,13 @@ def niftistats_main(calctype="icc"):
             disable=(not args.showprogressbar),
         ):
             if args.paired:
-                t_in_valid[voxel], p_in_valid[voxel], df = ttest_rel(
+                result = ttest_rel(
                     validinvms[voxel, :, 0],
                     validinvms[voxel, :, 1],
                     alternative=args.alternative,
                 )
+                t_in_valid[voxel] = result.statistic
+                p_in_valid[voxel] = result.pvalue
             else:
                 t_in_valid[voxel], p_in_valid[voxel] = ttest_ind(
                     validinvms[voxel, :, 0],
@@ -451,7 +623,7 @@ def niftistats_main(calctype="icc"):
         )
         print(extraline)
 
-    outarray_in_vox = mask_in_vox * 0.0
+    outarray_in_vox = np.zeros_like(mask_in_vox)
 
     theheader = copy.deepcopy(datafile_hdr)
     theheader["dim"][0] = 3

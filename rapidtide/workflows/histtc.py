@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,17 +17,39 @@
 #
 #
 import argparse
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 import rapidtide.io as tide_io
 import rapidtide.stats as tide_stats
 import rapidtide.workflows.parser_funcs as pf
 
 
-def _get_parser():
+def _get_parser() -> Any:
     """
-    Argument parser for histtc
+    Argument parser for histtc.
+
+    This function constructs and returns an `argparse.ArgumentParser` object configured
+    for parsing command-line arguments for the `histtc` tool, which generates histograms
+    from timecourse data.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser for histtc.
+
+    Notes
+    -----
+    The parser includes both required and optional arguments for specifying input/output
+    files, histogram bin settings, and various data filtering options.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['--inputfilename', 'data.txt', '--outputroot', 'output'])
     """
     parser = argparse.ArgumentParser(
         prog="histtc",
@@ -108,7 +130,66 @@ def _get_parser():
     return parser
 
 
-def histtc(args):
+def histtc(args: Any) -> None:
+    """
+    Compute and save a histogram of input data, optionally filtered and normalized.
+
+    This function reads input data from a text file, computes specified percentiles,
+    and generates a histogram with optional normalization and range settings.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        An object containing the following attributes:
+        - inputfilename : str
+            Path to the input text file containing the data.
+        - debug : bool
+            If True, print debug information during execution.
+        - nozero : bool
+            If True, exclude values with absolute magnitude less than or equal to `nozerothresh`.
+        - nozerothresh : float
+            Threshold for excluding zero-like values when `nozero` is True.
+        - histlen : int
+            Number of bins for the histogram.
+        - outputroot : str
+            Root name for output files.
+        - robustrange : bool
+            If True, use robust range (2nd and 98th percentiles) for histogram.
+        - minval : float, optional
+            Minimum value for histogram range. If None, use data minimum.
+        - maxval : float, optional
+            Maximum value for histogram range. If None, use data maximum.
+        - normhist : bool
+            If True, normalize the histogram.
+
+    Returns
+    -------
+    None
+        This function does not return a value but saves a histogram to disk.
+
+    Notes
+    -----
+    The function uses `tide_io.readvectorsfromtextfile` to read input data and
+    `tide_stats.getfracvals` to compute percentiles. It then calls
+    `tide_stats.makeandsavehistogram` to generate and save the histogram.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     inputfilename='data.txt',
+    ...     debug=False,
+    ...     nozero=True,
+    ...     nozerothresh=1e-6,
+    ...     histlen=50,
+    ...     outputroot='output',
+    ...     robustrange=False,
+    ...     minval=None,
+    ...     maxval=None,
+    ...     normhist=True
+    ... )
+    >>> histtc(args)
+    """
     # set default variable values
     thepercentiles = [0.2, 0.25, 0.5, 0.75, 0.98]
     thepvalnames = []

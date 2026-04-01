@@ -139,16 +139,65 @@ releases will be somewhat more reliable.  That said, my tests routinely fail, ev
 when things actually work.  Probably should deal with that. Check back often for exciting
 new features and bug fixes!
 
+Testing lanes
+=============
+
+The test suite now supports marker-based lanes so you can run fast checks
+separately from heavier workflow tests.
+
+-  **unit**: fast parser/math/small mocked tests
+-  **slow**: heavier workflow-oriented tests
+
+Using pytest directly:
+
+-  ``pytest -m unit``
+-  ``pytest -m slow``
+-  ``pytest -m "not slow"``
+
+Using the local test helper script:
+
+-  ``cd rapidtide/tests``
+-  ``./runlocaltest unit``
+-  ``./runlocaltest notslow`` (or ``./runlocaltest pr``)
+-  ``./runlocaltest slow``
+-  ``./runlocaltest all``
+
+Recommended CI split:
+
+-  Fast lane (default PR checks): ``pytest -m "not slow"``
+-  Slow lane (scheduled/nightly or dedicated job): ``pytest -m slow``
+
+Current CircleCI lane mapping:
+
+-  Fast lane jobs (``-m "not slow"``):
+   ``test_py310``, ``test_py311_with_optional``, ``test_py311_with_coverage``,
+   ``test_py312``, ``test_py313``, ``test_py314``
+-  Slow lane job (``-m slow``):
+   ``test_py311_slow``
+
+Lane intent and expected runtime:
+
+-  ``unit``: parser/math/mocked checks intended for very fast local feedback.
+   Typical runtime is usually a few minutes or less, depending on hardware.
+-  ``not slow``: primary PR lane. Covers unit tests plus non-heavy workflows while
+   excluding long-running integration tests.
+-  ``slow``: heavy integration-style tests (fullrun/simroundtrip and other marked
+   workflow tests). This lane is intended for dedicated CI jobs.
+
+Suggested pre-push workflow:
+
+-  Before most commits: ``pytest -m unit``
+-  Before opening a PR: ``pytest -m "not slow"``
+-  Before release or in scheduled CI: ``pytest -m slow``
+
 Python version compatibility
 ============================
-I switched over a while ago to using Python 3 as my daily driver, so I know
-that everything works there. However, I know that a lot of people can\'t
-or won\'t switch from Python 2x, so I kept Python 2.7 compatibility for
-quite some time.
-
-That said, the writing is on the wall, and since I depend on a number of
-packages that have dropped Python 2.x support, as of 2.0, so has rapidtide. However,
-as of version 1.9.0 I\'m also releasing the code in a docker
+Since I depend on a number of
+packages that have dropped Python 2.x support, as of rapidtide 2.0, so did rapidtide. And given that I use fairly
+modern constructs, I don't support anything prior to Python 3.9.  The current UPPER limit is 3.12, because
+tensorflow (needed for happy) does not yet support 3.13 or later.  In 2025, I don't imagine
+anybody is running rapidtide on a system that can't upgrade to a modern Python, but if you are,
+as of version 1.9.0 the package is also available in a docker
 container (fredericklab/rapidtide), which has everything nicely installed in
 a fully configured Python 3 environment, so there\'s really no need for me continue 2.x
 support.  So now it's f-strings all the way, kids!
@@ -187,11 +236,11 @@ Ok, I\'m sold. What\'s in here?
    estimates the significance of the correlation. It has a range of
    filtering, windowing, and correlation options.
 
--  **rapidtide2x_legacy**, **happy_legacy**, **showxcorr_legacy** - The
-   older versions of the similarly named programs.  These use the old calling
-   conventions, for compatibility with older workflows.  These will go away
-   eventually, and they don't really get updates or bugfixes, so if you're
-   using them, change to the new ones, and if you're not using them, don't.
+-  **showxcorr_legacy** - The
+   older versions of the similarly named program.  This uses the old calling
+   conventions, for compatibility with older workflows.  This will go away
+   eventually, and it doesn't really get updates or bugfixes, so if you're
+   using it, change to the new one, and if you're not using it, don't.
 
 -  **rapidtide2std** - This is a utility for registering rapidtide
    output maps to standard coordinates. It\'s usually much faster to run
@@ -233,193 +282,6 @@ Financial Support
 This code base is being developed and supported by grants from the US
 NIH (`1R01 NS097512 <http://grantome.com/grant/NIH/R01-NS097512-02>`__, RF1 MH130637-01)
 
-Additional packages used
-========================
-
-Rapidtide would not be possible without many additional open source packages.
-These include:
-
-numpy:
-------
-
-1) Stéfan van der Walt, S. Chris Colbert and Gaël Varoquaux. The NumPy Array:
-   A Structure for Efficient Numerical Computation, Computing in Science
-   & Engineering, 13, 22-30 (2011) \| https://doi.org/10.1109/MCSE.2011.37
-
-scipy:
-------
-
-1) Pauli Virtanen, Ralf Gommers, Travis E. Oliphant, Matt Haberland, Tyler Reddy,
-   David Cournapeau, Evgeni Burovski, Pearu Peterson, Warren Weckesser,
-   Jonathan Bright, Stéfan J. van der Walt, Matthew Brett, Joshua Wilson,
-   K. Jarrod Millman, Nikolay Mayorov, Andrew R. J. Nelson, Eric Jones,
-   Robert Kern, Eric Larson, CJ Carey, İlhan Polat, Yu Feng, Eric W. Moore,
-   Jake VanderPlas, Denis Laxalde, Josef Perktold, Robert Cimrman,
-   Ian Henriksen, E.A. Quintero, Charles R Harris, Anne M. Archibald,
-   Antônio H. Ribeiro, Fabian Pedregosa, Paul van Mulbregt,
-   and SciPy 1.0 Contributors. (2020) SciPy 1.0: Fundamental Algorithms for
-   Scientific Computing in Python. Nature Methods, 17, 261–272 (2020) \|
-   https://doi.org/10.1038/s41592-019-0686-2
-
-matplotlib:
------------
-
-1) John D. Hunter. Matplotlib: A 2D Graphics Environment, Computing in Science
-   & Engineering, 9, 90-95 (2007) \| https://doi.org/10.1109/MCSE.2007.55
-
-nibabel:
---------
-
-1) https://github.com/nipy/nibabel \| https://doi.org/10.5281/zenodo.591597
-
-scikit-learn:
--------------
-
-1) Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B.,
-   Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V.,
-   Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M.,
-   and Duchesnay, E., Scikit-learn: Machine Learning in Python.
-   Journal of Machine Learning Research, 2011. 12: p. 2825-2830. \| https://scikit-learn.org
-
-pandas:
--------
-
-1) McKinney, W., pandas: a foundational Python library for data analysis
-   and statistics. Python for High Performance and Scientific Computing, 2011. 14.
-
-nilearn:
---------
-
-1) https://github.com/nilearn/nilearn
-
-
-References
-==========
-
-Links to PDFs of all papers mentioned here can be found on the OMG
-website: https://www.nirs-fmri.net/home/publications
-
-General overview of systemic low frequency oscillations in fMRI data
---------------------------------------------------------------------
-
-1) Tong Y, Hocke LM, Frederick BB. (2019) Low Frequency Systemic
-   Hemodynamic \"Noise\" in Resting State BOLD fMRI: Characteristics,
-   Causes, Implications, Mitigation Strategies, and Applications. Front.
-   Neurosci., 14 August 2019 \| https://doi.org/10.3389/fnins.2019.00787
-
-Multimodal Cerebral Circulation Imaging
----------------------------------------
-
-1)  Tong Y, Frederick BD. (2010) Time lag dependent multimodal
-    processing of concurrent fMRI and near-infrared spectroscopy (NIRS)
-    data suggests a global circulatory origin for low-frequency
-    oscillation signals in human brain. Neuroimage, 53(2), 553-64.
-
-2)  Tong Y, Hocke L, Frederick BD. (2011) Isolating the sources of
-    widespread physiological fluctuations in fNIRS signals. J Biomed
-    Opt. 16(10), 106005.
-
-3)  Tong Y, Bergethon PR, Frederick BD. (2011c) An improved method for
-    mapping cerebrovascular reserve using concurrent fMRI and
-    near-infrared spectroscopy with Regressor Interpolation at
-    Progressive Time Delays (RIPTiDe). Neuroimage, 56(4), 2047-2057.
-
-4)  Tong Y, Frederick BD. (2012) Concurrent fNIRS and fMRI processing
-    allows independent visualization of the propagation of pressure
-    waves and bulk blood flow in the cerebral vasculature. Neuroimage,
-    Jul 16;61(4): 1419-27.
-
-5)  Tong Y, Hocke LM, Licata SC, Frederick BD. (2012) Low frequency
-    oscillations measured in the periphery with near infrared
-    spectroscopy (NIRS) are strongly correlated with blood oxygen
-    level-dependent functional magnetic resonance imaging (BOLD fMRI)
-    signals. J Biomed Opt, 2012;17(10):106004. doi:
-    10.1117/1.JBO.17.10.106004. PubMed PMID: 23224003; PMCID: 3461094.
-
-6)  Tong Y, Hocke LM, Frederick BD. (2013) Short repetition time
-    multiband EPI with simultaneous pulse recording allows dynamic
-    imaging of the cardiac pulsation signal. Magn Reson Med
-    2014;72(5):1268-76. Epub Nov 22, 2013. doi: 10.1002/mrm.25041.
-    PubMed PMID: 24272768.
-
-7)  Tong Y, Frederick B. (2014) Studying the Spatial Distribution of
-    Physiological Effects on BOLD Signals using Ultrafast fMRI. Front
-    Hum Neurosci 2014;5(196). doi: doi: 10.3389/fnhum.2014.00196.
-
-8)  Tong Y, Frederick B. (2014) Tracking cerebral blood flow in BOLD
-    fMRI using recursively generated regressors. Hum Brain Mapp.
-    2014;35(11):5471-85. doi: 10.1002/hbm.22564. PubMed PMID: 24954380;
-    PMCID: PMC4206590.
-
-9)  Donahue M, Strother M, Lindsey K, Hocke L, Tong Y, Frederick B.
-    (2015) Time delay processing of hypercapnic fMRI allows quantitative
-    parameterization of cerebrovascular reactivity and blood flow
-    delays. Journal of Cerebral Blood Flow & Metabolism.  2015. PubMed 
-    PMID: 26661192. Epub October 19, 2015. doi: 10.1177/0271678X15608643.
-
-10) Hocke L, Cayetano K, Tong Y, Frederick B. (2015) An optimized
-    multimodal fMRI/NIRS probe for ultra-high resolution mapping.
-    Neurophotonics. 2(4), 045004 (Oct-Dec 2015). doi:
-    10.1117/1.NPh.2.4.0450004.
-
-11) Tong Y, Hocke LM, Fan X, Janes AC, Frederick B (2015). Can apparent
-    resting state connectivity arise from systemic fluctuations?
-    Frontiers in human neuroscience. 2015;9. doi:
-    10.3389/fnhum.2015.00285.
-
-12) Tong Y, Lindsey KP, Hocke LM, Vitaliano G, Mintzopoulos D, Frederick
-    B. (2016) Perfusion information extracted from resting state
-    functional magnetic resonance imaging. Journal of cerebral blood
-    flow and metabolism : official journal of the International Society
-    of Cerebral Blood Flow and Metabolism. 2016. doi:
-    10.1177/0271678X16631755. PubMed PMID: 26873885.
-
-Cardiac waveform extraction and refinement
-------------------------------------------
-
-1) Aslan S, Hocke L, Schwarz N, Frederick B. (2019) Extraction of the
-   cardiac waveform from simultaneous multislice fMRI data using slice
-   sorted averaging and a deep learning reconstruction filter.
-   NeuroImage 198, 303–316 (2019).
-
-Physiological noise identification and removal using time delay methods
------------------------------------------------------------------------
-
-1) Tong Y, Lindsey KP, Frederick BD. (2011b) Partitioning of
-   physiological noise signals in the brain with concurrent
-   near-infrared spectroscopy (NIRS) and fMRI. J Cereb Blood Flow Metab.
-   31(12), 2352-62.
-
-2) Frederick BD, Nickerson LD, Tong Y. (2012) Physiological denoising of
-   BOLD fMRI data using Regressor Interpolation at Progressive Time
-   Delays (RIPTiDe) processing of concurrent fMRI and near-infrared
-   spectroscopy (NIRS). Neuroimage, Apr 15;60(3): 1419-27.
-
-3) Tong Y, Hocke LM, Nickerson LD, Licata SC, Lindsey KP, Frederick BB
-   (2013) Evaluating the effects of systemic low frequency oscillations
-   measured in the periphery on the independent component analysis
-   results of resting state networks. NeuroImage. 2013;76C:202-15. doi:
-   10.1016/j.neuroimage.2013.03.019. PubMed PMID: 23523805; PMCID:
-   PMC3652630.
-
-4) Hocke LM, Tong Y, Lindsey KP, Frederick BB (2016). Comparison of
-   peripheral near-infrared spectroscopy low-frequency oscillations to
-   other denoising methods in resting state functional MRI with
-   ultrahigh temporal resolution. Magnetic resonance in medicine :
-   official journal of the Society of Magnetic Resonance in Medicine /
-   Society of Magnetic Resonance in Medicine. 2016.
-   \| http://dx.doi.org/10.1002/mrm.26038. PubMed PMID: 26854203.
-
-5) Erdoğan S, Tong Y, Hocke L, Lindsey K, Frederick B (2016). Correcting
-   resting state fMRI-BOLD signals for blood arrival time enhances
-   functional connectivity analysis. Front. Hum. Neurosci., 28 June 2016
-   \| http://dx.doi.org/10.3389/fnhum.2016.00311
-
-6) Tong, Y, Hocke, LM, and Frederick, BB, Low Frequency
-   Systemic Hemodynamic \"Noise\" in Resting State BOLD fMRI: Characteristics,
-   Causes, Implications, Mitigation Strategies, and Applications.
-   Front Neurosci, 2019. 13: p. 787.
-   \| http://dx.doi.org/10.3389/fnins.2019.00787
 
 .. |PyPi Latest Version| image:: https://img.shields.io/pypi/v/rapidtide.svg
    :target: https://pypi.python.org/pypi/rapidtide/

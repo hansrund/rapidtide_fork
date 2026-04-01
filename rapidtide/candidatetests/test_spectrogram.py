@@ -19,8 +19,7 @@ import numpy as np
 import scipy as sp
 
 from rapidtide.filter import NoncausalFilter
-from rapidtide.helper_classes import FrequencyTracker
-from rapidtide.io import writevec
+from rapidtide.simFuncClasses import FrequencyTracker
 from rapidtide.util import valtoindex
 
 
@@ -232,7 +231,8 @@ def eval_filterprops(sampletime=0.50, tclengthinsecs=300.0, numruns=100, display
         assert response["upperstopmax"] < 1e4
         assert response["upperstopmean"] < 1e4
 
-    scratch = timeaxis * 0.0
+    testwaves = makewaves(sampletime=sampletime, tclengthinsecs=tclengthinsecs, displayplots=displayplots)
+    scratch = np.zeros_like(timeaxis)
     scratch[int(tclen / 5) : int(2 * tclen / 5)] = 1.0
     scratch[int(3 * tclen / 5) : int(4 * tclen / 5)] = 1.0
     testwaves.append(
@@ -242,7 +242,6 @@ def eval_filterprops(sampletime=0.50, tclengthinsecs=300.0, numruns=100, display
             "waveform": 1.0 * scratch,
         }
     )
-
     # show the end effects waveforms
     if displayplots:
         legend = []
@@ -272,7 +271,7 @@ def test_filterprops(displayplots=False):
 
 
 def main():
-    makewaves(displayplots=True)
+    thewaves = makewaves(displayplots=True)
 
 
 if __name__ == "__main__":

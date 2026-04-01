@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2026-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -58,6 +58,7 @@ def test_stcorrelate(debug=False):
     times, corrpertime, ppertime = shorttermcorr_1D(
         sig1, sig2, tr, windowtime, samplestep=int(stepsize // tr), detrendorder=0
     )
+    print(f"1D correlation: {corrpertime=}, {ppertime=}")
     # plength = len(times)
     times, xcorrpertime, Rvals, delayvals, valid = shorttermcorr_2D(
         sig1,
@@ -67,8 +68,9 @@ def test_stcorrelate(debug=False):
         samplestep=int(stepsize // tr),
         weighting=corrweighting,
         detrendorder=0,
-        displayplots=False,
+        displayplots=debug,
     )
+    print(f"2D correlation: {Rvals=}, {delayvals=}, {valid=}")
     # xlength = len(times)
     writenpvecs(corrpertime, outfilename + "_pearson.txt")
     writenpvecs(ppertime, outfilename + "_pvalue.txt")

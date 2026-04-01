@@ -1,15 +1,15 @@
 Bare metal installation
 -----------------------
-This gives you the maximum flexibility if you want to look at the code and/or modify things.  It may seem a little daunting at first,
-but it's not that bad.  And if you want a simpler path, skip down to the Docker installation instructions
+This gives you the maximum flexibility if you want to look at the code and/or modify things.
+If you want a simpler path, skip down to the Docker/singularity installation instructions.
 
 Required dependencies
 `````````````````````
 
 The processing programs in rapidtide require the following to be
-installed first:
+installed:
 
--  Python >= 3.8
+-  Python >= 3.10
 -  numpy
 -  scipy
 -  pandas
@@ -18,11 +18,15 @@ installed first:
 -  scikit-learn
 -  nibabel
 -  nilearn
--  matplotlib
--  pyqt5-sip
--  pyqtgraph
+-  matplotlib >= 3.3.0
+-  pyfftw
+-  pyqt6-sip
+-  pyqt6
+-  pyqtgraph >= 0.13.4
 -  statsmodels
 -  tqdm
+-  tensorflow
+-  tf-keras
 
 Optional dependencies
 `````````````````````
@@ -30,110 +34,57 @@ Optional dependencies
 The following optional dependencies will be used if present:
 
 -  numba (for faster performance)
--  pyfftw (faster performance)
--  mkl and mkl-service (faster performance on intel CPUs)
+-  mkl and mkl-service (faster performance on Intel CPUs)
 
-If you want to use the deep learning filter in happy, you’ll need Keras
-and some sort of backend. If you want to be able to train filters,
-you’ll probably want GPU support. This is currently an annoying,
-non-trivial thing to set up, especially on a Mac, which is where I do
-things, because Apple and Nvidia aren’t friends at the moment. If you
-are on a linux box (or maybe Windows - haven’t tested), WITH an Nvidia
-GPU, install:
 
--  keras
--  tensorflow-gpu (This assumes you have all the necessary CUDA
-   libraries. Making this all work together properly is a version
-   dependent moving target. Ask The Google the best way to do it this
-   week - anything I say here will probably be obsolete by the time you
-   read this.)
+Installing with pip from pypi
+`````````````````````````````
 
-If you are on linux (or Windows) WITHOUT an Nvidia GPU, install:
-
-- keras
-- tensorflow (and make sure it doesn’t sneakily try to install the GPU version - that won’t work)
-
-If you are on a Mac, you almost certainly have a non-Nvidia GPU, so you
-should install
-
--  plaidml-keras (it installs Keras and uses PlaidML as the backend
-   rather than tensorflow). You will have to run a configuration step in
-   plaidML to tell it what GPU to use and how. I use the “metal” option
-   with the AMD GPU in my laptop - that seems to be the most stable.
-   Currently, I think you have you have to do this from pypi - I haven’t
-   seen a conda version of this.
-
-Installing Python
-`````````````````
-
-The simplest way BY FAR to get this all done is to use Anaconda python
-from Continuum Analytics. It’s a free, curated scientific Python
-distribution that is easy to maintain and takes a lot of headaches out
-of maintaining a distribution. It also already comes with many of the
-dependencies for rapidtide installed by default. You can get it here:
-https://www.continuum.io. Rapidtide works with Python 3.8 or greater.
-
-After installing Anaconda python, install the remaining dependencies
-(including some good optional ones:
+This assumes you have a working python installation, and if you use virtual
+environments, you've set one up and activated it.  Once that's all ready, you can simply install
+with pip (this will pull everything it needs from pypi.org, the Python Package Index):
 
 ::
 
-   conda install nibabel pyqtgraph pyfftw
+    pip install rapidtide
 
-
-For the deep learning filter in happy, also do:
-
-::
-
-   conda install keras tensorflow-gpu
-
-
-(for Linux or Windows WITH Nvidia GPU)
-
-or:
-
-::
-
-   conda install keras tensorflow
-
-
-(for Linux or Windows WITHOUT Nvidia GPU)
-
-or
-
-::
-
-   pip install plaidml-keras
-
-
-(on a Mac)
+This will install rapidtide and all dependencies direct from pypi.  You should be
+all set.
 
 Done.
 
-Installing the rapidtide library
-````````````````````````````````
+Installing from Github
+``````````````````````
 
-Once you have installed the prerequisites, cd into the package
-directory, and type the following:
+You can take this route if you want to poke around in the code, and perhaps modify it.
+As above, this assumes you have python installed and if you are using a virtual environment,
+you've activated it.  Go to the directory where you want to install the rapidtide
+source code, and type:
 
 ::
 
-   python setup.py install
+   git clone https://github.com/bbfrederick/rapidtide.git
+   cd rapidtide
+   ./refresh
 
 
 to install all of the tools in the package. You should be able to run
-them from the command line then (after rehashing).
+them from the command line then, and all the code is in your current directory (and
+subdirectories).
 
-Updating
-````````
-
-If you’ve previously installed rapidtide and want to update, cd into the
-package directory and do a git pull first:
+If you’ve made edits to the code, or want to sync up with the current version on Github,
+cd into the
+package directory and type ``./refresh``:
 
 ::
 
-   git pull
-   python setup.py install
+   ./refresh
+
+
+This will uninstall the current version, sync up to github, and reinstall
+the package (assuming you don't have any merge conflicts with the version on Github,
+which you have to resolve).  This will keep you on the bleeding edge of development,
+if that's your thing.
 
 
 Docker installation
@@ -145,10 +96,14 @@ first make sure you have docker installed and properly configured, then run the 
     docker pull fredericklab/rapidtide:latest-release
 
 
-This will download the docker container from dockerhub.
-It's around a 3GB download, so it may take some time, but it caches the file locally, so you won't have to do this again
-unless the container updates.  To use a particular version, replace "latest-release" with the version of the
-container you want.
+This will download the Docker container from dockerhub.
+It's around a 3GB download, so it may take some time, but it caches the file locally,
+so you won't have to do this again
+unless the container updates.  To use a particular version,
+replace "latest-release" with the version of the
+container you want.  Please note that I generate amd64 and arm64 versions of the container,
+so it runs natively (the amd64 container will run on an Apple Silicon Mac in Docker, but,
+Docker will pull the arm64 version unless you tell it not to).
 
 If you like to live on the edge, just use:
 ::
@@ -160,7 +115,7 @@ This will use the most recent version on dockerhub, which is built automatically
 NOTE: I don't advise doing this unless you're helping debug something - 
 there's no guarantee that "latest" is functional at any given time.
 
-Now that the file is downloaded, you can run and rapidtide command in the Docker container.  For example, to run a simple
+Now that the file is downloaded, you can run any rapidtide command in the Docker container.  For example, to run a simple
 rapidtide analysis, you would use the following command (you can do this all in one step - it will just integrate the
 first pull into the run time if the version you request hasn't already been downloaded).
 
@@ -235,22 +190,23 @@ Then the following command will work (you can replace 'tidepool' with any of the
 Singularity installation
 ------------------------
 
-Many times you can't use Docker, because of security concerns.  Singularity, from LBL, offers containerized computing
-that runs entirely in user space, so the amount of mischief you can get up to is significantly less.  Singularity
+Many times you can't use Docker, because of security concerns.  Apptainer (formerly singularity), from LBL, offers containerized computing
+that runs entirely in user space, so the amount of mischief you can get up to is significantly less.  Apptainer
 containers can be created from Docker containers as follows (stealing from the fMRIprep documentation):
 ::
 
-    singularity build /my_images/rapidtide.simg docker://fredericklab/rapidtide:latest-release
+    apptainer build \
+        /my_image_directory/rapidtide.sif \
+        docker://fredericklab/rapidtide:latest-release
 
 
 Running the container is similar to Docker.  The "-B" option is used to bind filesystems to mountpoints in the container.
-For example, to run the simple rapidtide2x analysis above, type the following:
+For example, to run the simple rapidtide analysis above, type the following:
 ::
 
-    singularity run \
-        --cleanenv \
+    apptainer run \
         -B INPUTDIRECTORY:/data_in,OUTPUTDIRECTORY:/data_out \
-        rapidtide.simg \
+        rapidtide.sif \
             rapidtide \
                 /data_in/YOURNIFTIFILE.nii.gz \
                 /data_out/outputname \

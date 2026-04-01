@@ -1,12 +1,14 @@
 #!/bin/bash
 
-conda create --name rapidtide python==3.11
-conda activate rapidtide
-conda install \
+conda create --name micfix python
+conda init
+conda activate micfix
+mamba install \
     numpy \
     scipy \
     matplotlib \
     pandas \
+    pyarrow \
     statsmodels \
     scikit-learn \
     scikit-image \
@@ -14,9 +16,13 @@ conda install \
     nilearn \
     pyfftw \
     pywavelets \
-    pyqt \
-    pyqt5-sip \
+    pyqt6 \
+    pyqt6-sip \
     pyqtgraph \
-    tqdm
+    tqdm \
+    versioneer \
+    requests
 
-pip install tensorflow keras
+mamba install \
+    tf-keras \
+    tensorflow 

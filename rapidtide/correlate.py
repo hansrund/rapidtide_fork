@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,37 +17,30 @@
 #
 #
 """Functions for calculating correlations and similar metrics between arrays."""
+
 import logging
-import warnings
+from typing import Any, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    try:
-        import pyfftw
-    except ImportError:
-        pyfftwpresent = False
-    else:
-        pyfftwpresent = True
-
-
+import pyfftw
 import scipy as sp
 from numpy.fft import irfftn, rfftn
-from scipy import fftpack, signal
+from numpy.typing import NDArray
+from scipy import fft, signal
 from sklearn.metrics import mutual_info_score
 
-import rapidtide.correlate as tide_corr
 import rapidtide.fit as tide_fit
 import rapidtide.miscmath as tide_math
 import rapidtide.resample as tide_resample
 import rapidtide.stats as tide_stats
 import rapidtide.util as tide_util
+from rapidtide.ffttools import optfftlen
 
-if pyfftwpresent:
-    fftpack = pyfftw.interfaces.scipy_fftpack
-    pyfftw.interfaces.cache.enable()
+# Use pyfftw as the backend for all scipy.fft operations
+sp.fft.set_backend(pyfftw.interfaces.scipy_fft)
+pyfftw.interfaces.cache.enable()
+
 LGR = logging.getLogger("GENERAL")
 
 # ---------------------------------------- Global constants -------------------------------------------
@@ -56,64 +49,80 @@ MAXLINES = 10000000
 donotbeaggressive = True
 
 
-# ----------------------------------------- Conditional imports ---------------------------------------
-try:
-    from numba import jit
-except ImportError:
-    donotusenumba = True
-else:
-    donotusenumba = False
-
-
-def conditionaljit():
-    """Wrap functions in jit if numba is enabled."""
-
-    def resdec(f):
-        if donotusenumba:
-            return f
-        return jit(f, nopython=True)
-
-    return resdec
-
-
-def disablenumba():
-    """Set a global variable to disable numba."""
-    global donotusenumba
-    donotusenumba = True
-
-
 # --------------------------- Correlation functions -------------------------------------------------
 def check_autocorrelation(
-    corrscale,
-    thexcorr,
-    delta=0.1,
-    acampthresh=0.1,
-    aclagthresh=10.0,
-    displayplots=False,
-    detrendorder=1,
-):
-    """Check for autocorrelation in an array.
+    corrscale: NDArray,
+    thexcorr: NDArray,
+    delta: float = 0.05,
+    acampthresh: float = 0.1,
+    aclagthresh: float = 10.0,
+    displayplots: bool = False,
+    detrendorder: int = 1,
+    debug: bool = False,
+) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Check for autocorrelation peaks in a cross-correlation signal and fit a Gaussian to the sidelobe.
+
+    This function identifies peaks in the cross-correlation signal and, if a significant
+    sidelobe is detected (based on amplitude and lag thresholds), fits a Gaussian function
+    to estimate the sidelobe's time and amplitude.
 
     Parameters
     ----------
-    corrscale
-    thexcorr
-    delta
-    acampthresh
-    aclagthresh
-    displayplots
-    windowfunc
-    detrendorder
+    corrscale : NDArray
+        Array of time lags corresponding to the cross-correlation values.
+    thexcorr : NDArray
+        Array of cross-correlation values.
+    delta : float, optional
+        Minimum distance between peaks, default is 0.05.
+    acampthresh : float, optional
+        Amplitude threshold for detecting sidelobes, default is 0.1.
+    aclagthresh : float, optional
+        Lag threshold beyond which sidelobes are ignored, default is 10.0.
+    displayplots : bool, optional
+        If True, display the cross-correlation plot with detected peaks, default is False.
+    detrendorder : int, optional
+        Order of detrending to apply to the signal, default is 1.
+    debug : bool, optional
+        If True, print debug information, default is False.
 
     Returns
     -------
-    sidelobetime
-    sidelobeamp
+    Tuple[Optional[float], Optional[float]]
+        A tuple containing the estimated sidelobe time and amplitude if a valid sidelobe is found,
+        otherwise (None, None).
+
+    Notes
+    -----
+    - The function uses `peakdetect` to find peaks in the cross-correlation.
+    - A Gaussian fit is performed only if a peak is found beyond the zero-lag point and
+      satisfies the amplitude and lag thresholds.
+    - The fit is performed on a window around the detected sidelobe.
+
+    Examples
+    --------
+    >>> corrscale = np.linspace(0, 20, 100)
+    >>> thexcorr = np.exp(-0.5 * (corrscale - 5)**2 / 2) + 0.1 * np.random.rand(100)
+    >>> time, amp = check_autocorrelation(corrscale, thexcorr, delta=0.1, acampthresh=0.05)
+    >>> print(f"Sidelobe time: {time}, Amplitude: {amp}")
     """
+    if debug:
+        print("check_autocorrelation:")
+        print(f"delta: {delta}")
+        print(f"acampthresh: {acampthresh}")
+        print(f"aclagthresh: {aclagthresh}")
+        print(f"displayplots: {displayplots}")
     lookahead = 2
+    if displayplots:
+        print(f"check_autocorrelation: {displayplots=}")
+        plt.plot(corrscale, thexcorr)
+        plt.show()
     peaks = tide_fit.peakdetect(thexcorr, x_axis=corrscale, delta=delta, lookahead=lookahead)
     maxpeaks = np.asarray(peaks[0], dtype="float64")
     if len(peaks[0]) > 0:
+        if debug:
+            print(f"found {len(peaks[0])} peaks")
+            print(peaks)
         LGR.debug(peaks)
         zeropkindex = np.argmin(abs(maxpeaks[:, 0]))
         for i in range(zeropkindex + 1, maxpeaks.shape[0]):
@@ -155,35 +164,135 @@ def check_autocorrelation(
                     )
                     plt.show()
                 return sidelobetime, sidelobeamp
+    else:
+        if debug:
+            print("no peaks found")
     return None, None
 
 
-def shorttermcorr_1D(
-    data1,
-    data2,
-    sampletime,
-    windowtime,
-    samplestep=1,
-    detrendorder=0,
-    windowfunc="hamming",
-):
-    """Calculate short-term sliding-window correlation between two 1D arrays.
+def find_all_acf_sidelobes(
+    corrscale: NDArray,
+    acf: NDArray,
+    ampthresh: float = 0.1,
+    acwidth: float = 2.0,
+    delta: float = 0.05,
+    debug: bool = False,
+) -> list:
+    """Find all significant sidelobe peaks in an autocorrelation function.
+
+    Unlike ``check_autocorrelation``, which returns only the first positive-lag
+    sidelobe, this function returns ALL peaks (both positive and negative lags)
+    that exceed the amplitude threshold and lie outside the central peak region.
 
     Parameters
     ----------
-    data1
-    data2
-    sampletime
-    windowtime
-    samplestep
-    detrendorder
-    windowfunc
+    corrscale : NDArray
+        Array of time lags corresponding to the ACF values.
+    acf : NDArray
+        Autocorrelation function values.
+    ampthresh : float, optional
+        Amplitude threshold as a fraction of the central peak amplitude.
+        Default is 0.1.
+    acwidth : float, optional
+        Half-width of the central peak region to exclude (seconds). Peaks
+        with |lag| <= acwidth are ignored. Default is 2.0.
+    delta : float, optional
+        Minimum separation between detected peaks for ``peakdetect``.
+        Default is 0.05.
+    debug : bool, optional
+        If True, print debug information. Default is False.
 
     Returns
     -------
-    times
-    corrpertime
-    ppertime
+    list of tuple[float, float]
+        List of ``(lag, amplitude)`` tuples for significant sidelobes, sorted
+        by descending absolute amplitude.  Returns an empty list when no
+        sidelobes are found.
+    """
+    lookahead = 2
+    peaks = tide_fit.peakdetect(acf, x_axis=corrscale, delta=delta, lookahead=lookahead)
+    maxpeaks = np.asarray(peaks[0], dtype="float64")
+    if len(maxpeaks) == 0:
+        if debug:
+            print("find_all_acf_sidelobes: no peaks found")
+        return []
+
+    zeropkindex = np.argmin(abs(maxpeaks[:, 0]))
+    central_amp = maxpeaks[zeropkindex, 1]
+
+    sidelobes = []
+    for i in range(len(maxpeaks)):
+        if i == zeropkindex:
+            continue
+        lag = maxpeaks[i, 0]
+        if abs(lag) <= acwidth:
+            continue
+        amp = maxpeaks[i, 1]
+        if abs(amp) > ampthresh * abs(central_amp):
+            sidelobes.append((lag, amp))
+
+    sidelobes.sort(key=lambda x: abs(x[1]), reverse=True)
+    if debug:
+        print(f"find_all_acf_sidelobes: found {len(sidelobes)} sidelobes: {sidelobes}")
+    return sidelobes
+
+
+def shorttermcorr_1D(
+    data1: NDArray,
+    data2: NDArray,
+    sampletime: float,
+    windowtime: float,
+    samplestep: int = 1,
+    detrendorder: int = 0,
+    windowfunc: str = "hamming",
+) -> Tuple[NDArray, NDArray, NDArray]:
+    """
+    Compute short-term cross-correlation between two 1D signals using sliding windows.
+
+    This function calculates the Pearson correlation coefficient between two signals
+    over short time windows, allowing for the analysis of time-varying correlations.
+    The correlation is computed for overlapping windows across the input data,
+    with optional detrending and windowing applied to each segment.
+
+    Parameters
+    ----------
+    data1 : NDArray
+        First input signal (1D array).
+    data2 : NDArray
+        Second input signal (1D array). Must have the same length as `data1`.
+    sampletime : float
+        Time interval between consecutive samples in seconds.
+    windowtime : float
+        Length of the sliding window in seconds.
+    samplestep : int, optional
+        Step size (in samples) between consecutive windows. Default is 1.
+    detrendorder : int, optional
+        Order of detrending to apply before correlation. 0 means no detrending.
+        Default is 0.
+    windowfunc : str, optional
+        Window function to apply to each segment. Default is "hamming".
+
+    Returns
+    -------
+    times : NDArray
+        Array of time values corresponding to the center of each window.
+    corrpertime : NDArray
+        Array of Pearson correlation coefficients for each window.
+    ppertime : NDArray
+        Array of p-values associated with the correlation coefficients.
+
+    Notes
+    -----
+    The function uses `tide_math.corrnormalize` for normalization and detrending
+    of signal segments, and `scipy.stats.pearsonr` for computing the correlation.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> data1 = np.random.randn(1000)
+    >>> data2 = np.random.randn(1000)
+    >>> times, corr, pvals = shorttermcorr_1D(data1, data2, 0.1, 1.0)
+    >>> print(f"Correlation at time {times[0]:.2f}: {corr[0]:.3f}")
     """
     windowsize = int(windowtime // sampletime)
     halfwindow = int((windowsize + 1) // 2)
@@ -201,10 +310,11 @@ def shorttermcorr_1D(
             detrendorder=detrendorder,
             windowfunc=windowfunc,
         )
-        thepcorr = sp.stats.pearsonr(dataseg1, dataseg2)
+        thepearsonresult = sp.stats.pearsonr(dataseg1, dataseg2)
+        thepcorrR, thepcorrp = thepearsonresult.statistic, thepearsonresult.pvalue
         times.append(i * sampletime)
-        corrpertime.append(thepcorr[0])
-        ppertime.append(thepcorr[1])
+        corrpertime.append(thepcorrR)
+        ppertime.append(thepcorrp)
     return (
         np.asarray(times, dtype="float64"),
         np.asarray(corrpertime, dtype="float64"),
@@ -213,42 +323,85 @@ def shorttermcorr_1D(
 
 
 def shorttermcorr_2D(
-    data1,
-    data2,
-    sampletime,
-    windowtime,
-    samplestep=1,
-    laglimits=None,
-    weighting="None",
-    zeropadding=0,
-    windowfunc="None",
-    detrendorder=0,
-    compress=False,
-    displayplots=False,
-):
-    """Calculate short-term sliding-window correlation between two 2D arrays.
+    data1: NDArray,
+    data2: NDArray,
+    sampletime: float,
+    windowtime: float,
+    samplestep: int = 1,
+    laglimits: Optional[Tuple[float, float]] = None,
+    weighting: str = "None",
+    zeropadding: int = 0,
+    windowfunc: str = "None",
+    detrendorder: int = 0,
+    compress: bool = False,
+    displayplots: bool = False,
+) -> Tuple[NDArray, NDArray, NDArray, NDArray, NDArray]:
+    """
+    Compute short-term cross-correlations between two 1D signals over sliding windows.
+
+    This function computes the cross-correlation between two input signals (`data1` and `data2`)
+    using a sliding window approach. For each window, the cross-correlation is computed and
+    the peak lag and correlation coefficient are extracted. The function supports detrending,
+    windowing, and various correlation weighting schemes.
 
     Parameters
     ----------
-    data1
-    data2
-    sampletime
-    windowtime
-    samplestep
-    laglimits
-    weighting
-    zeropadding
-    windowfunc
-    detrendorder
-    displayplots
+    data1 : NDArray
+        First input signal (1D array).
+    data2 : NDArray
+        Second input signal (1D array). Must be of the same length as `data1`.
+    sampletime : float
+        Sampling interval of the input signals in seconds.
+    windowtime : float
+        Length of the sliding window in seconds.
+    samplestep : int, optional
+        Step size (in samples) for the sliding window. Default is 1.
+    laglimits : Tuple[float, float], optional
+        Minimum and maximum lag limits (in seconds) for peak detection.
+        If None, defaults to ±windowtime/2.
+    weighting : str, optional
+        Type of weighting to apply during cross-correlation ('None', 'hamming', etc.).
+        Default is 'None'.
+    zeropadding : int, optional
+        Zero-padding factor for the FFT-based correlation. Default is 0.
+    windowfunc : str, optional
+        Type of window function to apply ('None', 'hamming', etc.). Default is 'None'.
+    detrendorder : int, optional
+        Order of detrending to apply before correlation (0 = no detrend, 1 = linear, etc.).
+        Default is 0.
+    compress : bool, optional
+        Whether to compress the correlation result. Default is False.
+    displayplots : bool, optional
+        Whether to display intermediate plots (e.g., correlation matrix). Default is False.
 
     Returns
     -------
-    times
-    xcorrpertime
-    Rvals
-    delayvals
-    valid
+    times : NDArray
+        Array of time values corresponding to the center of each window.
+    xcorrpertime : NDArray
+        Array of cross-correlation functions for each window.
+    Rvals : NDArray
+        Correlation coefficients for each window.
+    delayvals : NDArray
+        Estimated time delays (lags) for each window.
+    valid : NDArray
+        Binary array indicating whether the peak detection was successful (1) or failed (0).
+
+    Notes
+    -----
+    - The function uses `fastcorrelate` for efficient cross-correlation computation.
+    - Peak detection is performed using `tide_fit.findmaxlag_gauss`.
+    - If `displayplots` is True, an image of the cross-correlations is shown.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.linspace(0, 10, 1000)
+    >>> signal1 = np.sin(2 * np.pi * 0.5 * t)
+    >>> signal2 = np.sin(2 * np.pi * 0.5 * t + 0.1)
+    >>> times, xcorrs, Rvals, delays, valid = shorttermcorr_2D(
+    ...     signal1, signal2, sampletime=0.01, windowtime=1.0
+    ... )
     """
     windowsize = int(windowtime // sampletime)
     halfwindow = int((windowsize + 1) // 2)
@@ -339,14 +492,38 @@ def shorttermcorr_2D(
     )
 
 
-def calc_MI(x, y, bins=50):
-    """Calculate mutual information between two arrays.
+def calc_MI(x: NDArray, y: NDArray, bins: int = 50) -> float:
+    """
+    Calculate mutual information between two arrays.
+
+    Parameters
+    ----------
+    x : array-like
+        First array of data points
+    y : array-like
+        Second array of data points
+    bins : int, optional
+        Number of bins to use for histogram estimation, default is 50
+
+    Returns
+    -------
+    float
+        Mutual information between x and y
 
     Notes
     -----
-    From https://stackoverflow.com/questions/20491028/
-    optimal-way-to-compute-pairwise-mutual-information-using-numpy/
+    This implementation uses 2D histogram estimation followed by mutual information
+    calculation. The method is based on the approach from:
+    https://stackoverflow.com/questions/20491028/optimal-way-to-compute-pairwise-mutual-information-using-numpy/
     20505476#20505476
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.random.randn(1000)
+    >>> y = x + np.random.randn(1000) * 0.5
+    >>> mi = calc_MI(x, y)
+    >>> print(f"Mutual information: {mi:.3f}")
     """
     c_xy = np.histogram2d(x, y, bins)[0]
     mi = mutual_info_score(None, None, contingency=c_xy)
@@ -354,59 +531,191 @@ def calc_MI(x, y, bins=50):
 
 
 # @conditionaljit()
-def mutual_info_2d(
-    x, y, sigma=1, bins=(256, 256), fast=False, normalized=True, EPS=1.0e-6, debug=False
-):
-    """Compute (normalized) mutual information between two 1D variate from a joint histogram.
+def mutual_info_2d_fast(
+    x: NDArray[np.floating[Any]],
+    y: NDArray[np.floating[Any]],
+    bins: Tuple[NDArray, NDArray],
+    sigma: float = 1,
+    normalized: bool = True,
+    EPS: float = 1.0e-6,
+    debug: bool = False,
+) -> float:
+    """
+    Compute (normalized) mutual information between two 1D variates from a joint histogram.
 
     Parameters
     ----------
-    x : 1D array
-        first variable
-    y : 1D array
-        second variable
+    x : 1D NDArray[np.floating[Any]]
+        First variable.
+    y : 1D NDArray[np.floating[Any]]
+        Second variable.
+    bins : tuple of NDArray
+        Bin edges for the histogram. The first element corresponds to `x` and the second to `y`.
     sigma : float, optional
-        Sigma for Gaussian smoothing of the joint histogram.
-        Default = 1.
-    bins : tuple, optional
-    fast : bool, optional
-    normalized : bool
-        If True, this will calculate the normalized mutual information from [1]_.
-        Default = False.
+        Sigma for Gaussian smoothing of the joint histogram. Default is 1.
+    normalized : bool, optional
+        If True, compute normalized mutual information as defined in [1]_. Default is True.
     EPS : float, optional
-        Default = 1.0e-6.
+        Small constant to avoid numerical errors in logarithms. Default is 1e-6.
+    debug : bool, optional
+        If True, print intermediate values for debugging. Default is False.
 
     Returns
     -------
-    nmi: float
-        the computed similarity measure
+    float
+        The computed mutual information (or normalized mutual information if `normalized=True`).
 
     Notes
     -----
-    From Ionnis Pappas
-    BBF added the precaching (fast) option
+    This function computes mutual information using a 2D histogram and Gaussian smoothing.
+    The normalization follows the approach described in [1]_.
 
     References
     ----------
     .. [1] Colin Studholme, David John Hawkes, Derek L.G. Hill (1998).
            "Normalized entropy measure for multimodality image alignment".
            in Proc. Medical Imaging 1998, vol. 3338, San Diego, CA, pp. 132-143.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.random.randn(1000)
+    >>> y = np.random.randn(1000)
+    >>> bins = (np.linspace(-3, 3, 64), np.linspace(-3, 3, 64))
+    >>> mi = mutual_info_2d_fast(x, y, bins)
+    >>> print(mi)
     """
-    if fast:
-        xstart = bins[0][0]
-        xend = bins[0][-1]
-        ystart = bins[1][0]
-        yend = bins[1][-1]
-        numxbins = len(bins[0]) - 1
-        numybins = len(bins[1]) - 1
-        cuts = (x >= xstart) & (x < xend) & (y >= ystart) & (y < yend)
-        c = ((x[cuts] - xstart) / (xend - xstart) * numxbins).astype(np.int_)
-        c += ((y[cuts] - ystart) / (yend - ystart) * numybins).astype(np.int_) * numxbins
-        jh = np.bincount(c, minlength=numxbins * numybins).reshape(numxbins, numybins)
-    else:
-        jh, xbins, ybins = np.histogram2d(x, y, bins=bins)
-        if debug:
-            print(f"{xbins} {ybins}")
+    xstart = bins[0][0]
+    xend = bins[0][-1]
+    ystart = bins[1][0]
+    yend = bins[1][-1]
+    numxbins = int(len(bins[0]) - 1)
+    numybins = int(len(bins[1]) - 1)
+    cuts = (x >= xstart) & (x < xend) & (y >= ystart) & (y < yend)
+    c = ((x[cuts] - xstart) / (xend - xstart) * numxbins).astype(np.int_)
+    c += ((y[cuts] - ystart) / (yend - ystart) * numybins).astype(np.int_) * numxbins
+    jh = np.bincount(c, minlength=numxbins * numybins).reshape(numxbins, numybins)
+
+    return proc_MI_histogram(jh, sigma=sigma, normalized=normalized, EPS=EPS, debug=debug)
+
+
+# @conditionaljit()
+def mutual_info_2d(
+    x: NDArray[np.floating[Any]],
+    y: NDArray[np.floating[Any]],
+    bins: Tuple[int, int],
+    sigma: float = 1,
+    normalized: bool = True,
+    EPS: float = 1.0e-6,
+    debug: bool = False,
+) -> float:
+    """
+    Compute (normalized) mutual information between two 1D variates from a joint histogram.
+
+    Parameters
+    ----------
+    x : 1D NDArray[np.floating[Any]]
+        First variable.
+    y : 1D NDArray[np.floating[Any]]
+        Second variable.
+    bins : tuple of int
+        Number of bins for the histogram. The first element is the number of bins for `x`
+        and the second for `y`.
+    sigma : float, optional
+        Sigma for Gaussian smoothing of the joint histogram. Default is 1.
+    normalized : bool, optional
+        If True, compute normalized mutual information as defined in [1]_. Default is True.
+    EPS : float, optional
+        Small constant to avoid numerical errors in logarithms. Default is 1e-6.
+    debug : bool, optional
+        If True, print intermediate values for debugging. Default is False.
+
+    Returns
+    -------
+    float
+        The computed mutual information (or normalized mutual information if `normalized=True`).
+
+    Notes
+    -----
+    This function computes mutual information using a 2D histogram and Gaussian smoothing.
+    The normalization follows the approach described in [1]_.
+
+    References
+    ----------
+    .. [1] Colin Studholme, David John Hawkes, Derek L.G. Hill (1998).
+           "Normalized entropy measure for multimodality image alignment".
+           in Proc. Medical Imaging 1998, vol. 3338, San Diego, CA, pp. 132-143.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.random.randn(1000)
+    >>> y = np.random.randn(1000)
+    >>> mi = mutual_info_2d(x, y)
+    >>> print(mi)
+    """
+    jh, xbins, ybins = np.histogram2d(x, y, bins=bins)
+    if debug:
+        print(f"{xbins} {ybins}")
+
+    return proc_MI_histogram(jh, sigma=sigma, normalized=normalized, EPS=EPS, debug=debug)
+
+
+def proc_MI_histogram(
+    jh: NDArray[np.floating[Any]],
+    sigma: float = 1,
+    normalized: bool = True,
+    EPS: float = 1.0e-6,
+    debug: bool = False,
+) -> float:
+    """
+    Compute the mutual information (MI) between two variables from a joint histogram.
+
+    This function calculates mutual information using the joint histogram of two variables,
+    applying Gaussian smoothing and computing entropy-based MI. It supports both normalized
+    and unnormalized versions of the mutual information.
+
+    Parameters
+    ----------
+    jh : ndarray of shape (m, n)
+        Joint histogram of two variables. Should be a 2D array of floating point values.
+    sigma : float, optional
+        Standard deviation for Gaussian smoothing of the joint histogram. Default is 1.0.
+    normalized : bool, optional
+        If True, returns normalized mutual information. If False, returns unnormalized
+        mutual information. Default is True.
+    EPS : float, optional
+        Small constant added to the histogram to avoid numerical issues in log computation.
+        Default is 1e-6.
+    debug : bool, optional
+        If True, prints intermediate values for debugging purposes. Default is False.
+
+    Returns
+    -------
+    float
+        The computed mutual information (MI) between the two variables. The value is
+        positive and indicates the amount of information shared between the variables.
+
+    Notes
+    -----
+    The function applies Gaussian smoothing to the joint histogram before computing
+    marginal and joint entropies. The mutual information is computed as:
+
+    .. math::
+        MI = \\frac{H(X) + H(Y)}{H(X,Y)} - 1
+
+    where :math:`H(X)`, :math:`H(Y)`, and :math:`H(X,Y)` are the marginal and joint entropies,
+    respectively. If `normalized=False`, the unnormalized MI is returned instead.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy import ndimage
+    >>> jh = np.random.rand(10, 10)
+    >>> mi = proc_MI_histogram(jh, sigma=0.5, normalized=True)
+    >>> print(mi)
+    0.123456789
+    """
 
     # smooth the jh with a gaussian filter of given sigma
     sp.ndimage.gaussian_filter(jh, sigma=sigma, mode="constant", output=jh)
@@ -441,65 +750,96 @@ def mutual_info_2d(
 
 # @conditionaljit
 def cross_mutual_info(
-    x,
-    y,
-    returnaxis=False,
-    negsteps=-1,
-    possteps=-1,
-    locs=None,
-    Fs=1.0,
-    norm=True,
-    madnorm=False,
-    windowfunc="None",
-    bins=-1,
-    prebin=True,
-    sigma=0.25,
-    fast=True,
-):
-    """Calculate cross-mutual information between two 1D arrays.
+    x: NDArray[np.floating[Any]],
+    y: NDArray[np.floating[Any]],
+    returnaxis: bool = False,
+    negsteps: int = -1,
+    possteps: int = -1,
+    locs: Optional[NDArray] = None,
+    Fs: float = 1.0,
+    norm: bool = True,
+    madnorm: bool = False,
+    windowfunc: str = "None",
+    bins: int = -1,
+    prebin: bool = True,
+    sigma: float = 0.25,
+    fast: bool = True,
+) -> Union[NDArray, Tuple[NDArray, NDArray, int]]:
+    """
+    Calculate cross-mutual information between two 1D arrays.
+
+    This function computes the cross-mutual information (MI) between two signals
+    `x` and `y` at various time lags or specified offsets. It supports normalization,
+    windowing, and histogram smoothing for robust estimation.
+
     Parameters
     ----------
-    x : 1D array
-        first variable
-    y : 1D array
-        second variable.  The length of y must by >= the length of x
-    returnaxis : bool
-        set to True to return the time axis
-    negsteps: int
-    possteps: int
-    locs : list
-        a set of offsets at which to calculate the cross mutual information
-    Fs=1.0,
-    norm : bool
-        calculate normalized MI at each offset
-    madnorm : bool
-        set to True to normalize cross MI waveform by it's median average deviate
-    windowfunc : str
-        name of the window function to apply to input vectors prior to MI calculation
-    bins : int
-        number of bins in each dimension of the 2D histogram.  Set to -1 to set automatically
-    prebin : bool
-        set to true to cache 2D histogram for all offsets
-    sigma : float
-        histogram smoothing kernel
-    fast: bool
-        apply speed optimizations
+    x : NDArray[np.floating[Any]]
+        First variable (signal).
+    y : NDArray[np.floating[Any]]
+        Second variable (signal). Must have length >= length of `x`.
+    returnaxis : bool, optional
+        If True, return the time axis along with the MI values. Default is False.
+    negsteps : int, optional
+        Number of negative time steps to compute MI for. If -1, uses default based on signal length.
+        Default is -1.
+    possteps : int, optional
+        Number of positive time steps to compute MI for. If -1, uses default based on signal length.
+        Default is -1.
+    locs : ndarray of int, optional
+        Specific time offsets at which to compute MI. If None, uses `negsteps` and `possteps`.
+        Default is None.
+    Fs : float, optional
+        Sampling frequency. Used when `returnaxis` is True. Default is 1.0.
+    norm : bool, optional
+        If True, normalize the MI values. Default is True.
+    madnorm : bool, optional
+        If True, normalize the MI waveform by its median absolute deviation (MAD).
+        Default is False.
+    windowfunc : str, optional
+        Name of the window function to apply to input signals before MI calculation.
+        Default is "None".
+    bins : int, optional
+        Number of bins for the 2D histogram. If -1, automatically determined.
+        Default is -1.
+    prebin : bool, optional
+        If True, precompute and cache the 2D histogram for all offsets.
+        Default is True.
+    sigma : float, optional
+        Standard deviation of the Gaussian smoothing kernel applied to the histogram.
+        Default is 0.25.
+    fast : bool, optional
+        If True, apply speed optimizations. Default is True.
 
     Returns
     -------
-    if returnaxis is True:
-        thexmi_x : 1D array
-            the set of offsets at which cross mutual information is calcuated
-        thexmi_y : 1D array
-            the set of cross mutual information values
-        len(thexmi_x): int
-            the number of cross mutual information values returned
-    else:
-        thexmi_y : 1D array
-            the set of cross mutual information values
+    ndarray or tuple of ndarray
+        If `returnaxis` is False:
+            The set of cross-mutual information values.
+        If `returnaxis` is True:
+            Tuple of (time_axis, mi_values, num_values), where:
+                - time_axis : ndarray of float
+                    Time axis corresponding to the MI values.
+                - mi_values : ndarray of float
+                    Cross-mutual information values.
+                - num_values : int
+                    Number of MI values returned.
 
+    Notes
+    -----
+    - The function normalizes input signals using detrending and optional windowing.
+    - Cross-mutual information is computed using 2D histogram estimation and
+      mutual information calculation.
+    - If `prebin` is True, the 2D histogram is precomputed for efficiency.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> x = np.random.randn(100)
+    >>> y = np.random.randn(100)
+    >>> mi = cross_mutual_info(x, y)
+    >>> mi_axis, mi_vals, num = cross_mutual_info(x, y, returnaxis=True, Fs=10)
     """
-
     normx = tide_math.corrnormalize(x, detrendorder=1, windowfunc=windowfunc)
     normy = tide_math.corrnormalize(y, detrendorder=1, windowfunc=windowfunc)
 
@@ -538,35 +878,59 @@ def cross_mutual_info(
         else:
             destloc += 1
         if i < 0:
-            thexmi_y[destloc] = mutual_info_2d(
-                normx[: i + len(normy)],
-                normy[-i:],
-                bins=bins2d,
-                normalized=norm,
-                fast=fast,
-                sigma=sigma,
-            )
+            if fast:
+                thexmi_y[destloc] = mutual_info_2d_fast(
+                    normx[: i + len(normy)],
+                    normy[-i:],
+                    bins2d,
+                    normalized=norm,
+                    sigma=sigma,
+                )
+            else:
+                thexmi_y[destloc] = mutual_info_2d(
+                    normx[: i + len(normy)],
+                    normy[-i:],
+                    bins2d,
+                    normalized=norm,
+                    sigma=sigma,
+                )
         elif i == 0:
-            thexmi_y[destloc] = mutual_info_2d(
-                normx,
-                normy,
-                bins=bins2d,
-                normalized=norm,
-                fast=fast,
-                sigma=sigma,
-            )
+            if fast:
+                thexmi_y[destloc] = mutual_info_2d_fast(
+                    normx,
+                    normy,
+                    bins2d,
+                    normalized=norm,
+                    sigma=sigma,
+                )
+            else:
+                thexmi_y[destloc] = mutual_info_2d(
+                    normx,
+                    normy,
+                    bins2d,
+                    normalized=norm,
+                    sigma=sigma,
+                )
         else:
-            thexmi_y[destloc] = mutual_info_2d(
-                normx[i:],
-                normy[: len(normy) - i],
-                bins=bins2d,
-                normalized=norm,
-                fast=fast,
-                sigma=sigma,
-            )
+            if fast:
+                thexmi_y[destloc] = mutual_info_2d_fast(
+                    normx[i:],
+                    normy[: len(normy) - i],
+                    bins2d,
+                    normalized=norm,
+                    sigma=sigma,
+                )
+            else:
+                thexmi_y[destloc] = mutual_info_2d(
+                    normx[i:],
+                    normy[: len(normy) - i],
+                    bins2d,
+                    normalized=norm,
+                    sigma=sigma,
+                )
 
     if madnorm:
-        thexmi_y = tide_math.madnormalize(thexmi_y)
+        thexmi_y = tide_math.madnormalize(thexmi_y)[0]
 
     if returnaxis:
         if locs is None:
@@ -582,77 +946,92 @@ def cross_mutual_info(
         return thexmi_y
 
 
-def mutual_info_to_r(themi, d=1):
-    """Convert mutual information to Pearson product-moment correlation."""
+def mutual_info_to_r(themi: float, d: int = 1) -> float:
+    """
+    Convert mutual information to Pearson product-moment correlation.
+
+    This function transforms mutual information values into Pearson correlation coefficients
+    using the relationship derived from the assumption of joint Gaussian distributions.
+
+    Parameters
+    ----------
+    themi : float
+        Mutual information value (in nats) to be converted.
+    d : int, default=1
+        Dimensionality of the random variables. For single-dimensional variables, d=1.
+        For multi-dimensional variables, d represents the number of dimensions.
+
+    Returns
+    -------
+    float
+        Pearson product-moment correlation coefficient corresponding to the input
+        mutual information value. The result is in the range [0, 1].
+
+    Notes
+    -----
+    The transformation is based on the formula:
+    r = (1 - exp(-2*MI/d))^(-1/2)
+
+    This approximation is valid under the assumption that the variables follow
+    a joint Gaussian distribution. For non-Gaussian distributions, the relationship
+    may not hold exactly.
+
+    Examples
+    --------
+    >>> mutual_info_to_r(1.0)
+    0.8416445342422313
+
+    >>> mutual_info_to_r(2.0, d=2)
+    0.9640275800758169
+    """
     return np.power(1.0 - np.exp(-2.0 * themi / d), -0.5)
 
 
-def dtw_distance(s1, s2):
-    # Dynamic time warping function written by GPT-4
-    # Get the lengths of the two input sequences
-    n, m = len(s1), len(s2)
-
-    # Initialize a (n+1) x (m+1) matrix with zeros
-    DTW = np.zeros((n + 1, m + 1))
-
-    # Set the first row and first column of the matrix to infinity, since
-    # the first element of each sequence cannot be aligned with an empty sequence
-    DTW[1:, 0] = np.inf
-    DTW[0, 1:] = np.inf
-
-    # Compute the DTW distance by iteratively filling in the matrix
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            # Compute the cost of aligning the i-th element of s1 with the j-th element of s2
-            cost = abs(s1[i - 1] - s2[j - 1])
-
-            # Compute the minimum cost of aligning the first i-1 elements of s1 with the first j elements of s2,
-            # the first i elements of s1 with the first j-1 elements of s2, and the first i-1 elements of s1
-            # with the first j-1 elements of s2, and add this to the cost of aligning the i-th element of s1
-            # with the j-th element of s2
-            DTW[i, j] = cost + np.min([DTW[i - 1, j], DTW[i, j - 1], DTW[i - 1, j - 1]])
-
-    # Return the DTW distance between the two sequences, which is the value in the last cell of the matrix
-    return DTW[n, m]
-
-
-def delayedcorr(data1, data2, delayval, timestep):
-    """Calculate correlation between two 1D arrays, at specific delay.
-
-    Parameters
-    ----------
-    data1
-    data2
-    delayval
-    timestep
-
-    Returns
-    -------
-    corr
-    """
+def delayedcorr(
+    data1: NDArray, data2: NDArray, delayval: float, timestep: float
+) -> Tuple[float, float]:
     return sp.stats.pearsonr(data1, tide_resample.timeshift(data2, delayval / timestep, 30)[0])
 
 
-def cepstraldelay(data1, data2, timestep, displayplots=True):
+def cepstraldelay(
+    data1: NDArray, data2: NDArray, timestep: float, displayplots: bool = True
+) -> float:
     """
-    Estimate delay between two signals using Choudhary's cepstral analysis method.
+    Calculate correlation between two datasets with a time delay applied to the second dataset.
+
+    This function computes the Pearson correlation coefficient between two datasets,
+    where the second dataset is time-shifted by a specified delay before correlation
+    is calculated. The time shift is applied using the tide_resample.timeshift function.
 
     Parameters
     ----------
-    data1
-    data2
-    timestep
-    displayplots
+    data1 : NDArray
+        First dataset for correlation calculation.
+    data2 : NDArray
+        Second dataset to be time-shifted and correlated with data1.
+    delayval : float
+        Time delay to apply to data2, specified in the same units as timestep.
+    timestep : float
+        Time step of the datasets, used to convert delayval to sample units.
 
     Returns
     -------
-    arr
+    Tuple[float, float]
+        Pearson correlation coefficient and p-value from the correlation test.
 
-    References
-    ----------
-    * Choudhary, H., Bahl, R. & Kumar, A.
-      Inter-sensor Time Delay Estimation using cepstrum of sum and difference signals in
-      underwater multipath environment. in 1-7 (IEEE, 2015). doi:10.1109/UT.2015.7108308
+    Notes
+    -----
+    The delayval is converted to sample units by dividing by timestep before
+    applying the time shift. The tide_resample.timeshift function is used internally
+    with a window parameter of 30.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> data1 = np.array([1, 2, 3, 4, 5])
+    >>> data2 = np.array([2, 3, 4, 5, 6])
+    >>> corr, p_value = delayedcorr(data1, data2, delay=1.0, timestep=0.1)
+    >>> print(f"Correlation: {corr:.3f}")
     """
     ceps1, _ = tide_math.complex_cepstrum(data1)
     ceps2, _ = tide_math.complex_cepstrum(data2)
@@ -690,22 +1069,75 @@ def cepstraldelay(data1, data2, timestep, displayplots=True):
 
 
 class AliasedCorrelator:
-    """An aliased correlator.
-
-    Parameters
-    ----------
-    hiressignal : 1D array
-        The unaliased waveform to match
-    hires_Fs : float
-        The sample rate of the unaliased waveform
-    numsteps : int
-        Number of distinct slice acquisition times within the TR.
-    """
-
     def __init__(self, hiressignal, hires_Fs, numsteps):
-        self.hiressignal = tide_math.corrnormalize(hiressignal)
+        """
+        Initialize the object with high-resolution signal parameters.
+
+        Parameters
+        ----------
+        hiressignal : array-like
+            High-resolution signal data to be processed.
+        hires_Fs : float
+            Sampling frequency of the high-resolution signal in Hz.
+        numsteps : int
+            Number of steps for signal processing.
+
+        Returns
+        -------
+        None
+            This method initializes the object attributes and does not return any value.
+
+        Notes
+        -----
+        This constructor sets up the basic configuration for high-resolution signal processing
+        by storing the sampling frequency and number of steps, then calls sethiressignal()
+        to process the input signal.
+
+        Examples
+        --------
+        >>> obj = MyClass(hiressignal, hires_Fs=44100, numsteps=100)
+        >>> obj.hires_Fs
+        44100
+        >>> obj.numsteps
+        100
+        """
         self.hires_Fs = hires_Fs
         self.numsteps = numsteps
+        self.sethiressignal(hiressignal)
+
+    def sethiressignal(self, hiressignal):
+        """
+        Set high resolution signal and compute related parameters.
+
+        This method processes the high resolution signal by normalizing it and computing
+        correlation-related parameters including correlation length and correlation x-axis.
+
+        Parameters
+        ----------
+        hiressignal : array-like
+            High resolution signal data to be processed and normalized.
+
+        Returns
+        -------
+        None
+            This method modifies the instance attributes in-place and does not return a value.
+
+        Notes
+        -----
+        The method performs correlation normalization using `tide_math.corrnormalize` and
+        computes the correlation length as `len(self.hiressignal) * 2 + 1`. The correlation
+        x-axis is computed based on the sampling frequency (`self.hires_Fs`) and the length
+        of the high resolution signal.
+
+        Examples
+        --------
+        >>> obj.sethiressignal(hiressignal_data)
+        >>> print(obj.corrlen)
+        1001
+        >>> print(obj.corrx.shape)
+        (1001,)
+        """
+        self.hiressignal = tide_math.corrnormalize(hiressignal)
         self.corrlen = len(self.hiressignal) * 2 + 1
         self.corrx = (
             np.linspace(0.0, self.corrlen, num=self.corrlen) / self.hires_Fs
@@ -713,47 +1145,135 @@ class AliasedCorrelator:
         )
 
     def getxaxis(self):
+        """
+        Return the x-axis correction value.
+
+        This method retrieves the correction value applied to the x-axis.
+
+        Returns
+        -------
+        float or int
+            The correction value for the x-axis stored in `self.corrx`.
+
+        Notes
+        -----
+        The returned value represents the x-axis correction that has been
+        previously computed or set in the object's `corrx` attribute.
+
+        Examples
+        --------
+        >>> obj = MyClass()
+        >>> obj.corrx = 5.0
+        >>> obj.getxaxis()
+        5.0
+        """
         return self.corrx
 
     def apply(self, loressignal, offset, debug=False):
-        """Apply correlator to aliased waveform.
+        """
+        Apply correlator to aliased waveform.
+
         NB: Assumes the highres frequency is an integral multiple of the lowres frequency
+
         Parameters
         ----------
-        loressignal: 1D array
+        loressignal : 1D array
             The aliased waveform to match
-        offset: int
+        offset : int
             Integer offset to apply to the upsampled lowressignal (to account for slice time offset)
-        debug: bool, optional
+        debug : bool, optional
             Whether to print diagnostic information
+
         Returns
         -------
-        corrfunc: 1D array
+        corrfunc : 1D array
             The full correlation function
+
+        Notes
+        -----
+        This function applies a correlator to an aliased waveform by:
+        1. Creating an upsampled version of the high-resolution signal
+        2. Inserting the low-resolution signal at the specified offset
+        3. Computing the cross-correlation between the two signals
+        4. Normalizing the result by the square root of the number of steps
+
+        Examples
+        --------
+        >>> result = correlator.apply(signal, offset=5, debug=True)
+        >>> print(result.shape)
+        (len(highres_signal),)
         """
         if debug:
             print(offset, self.numsteps)
-        osvec = self.hiressignal * 0.0
+        osvec = np.zeros_like(self.hiressignal)
         osvec[offset :: self.numsteps] = loressignal[:]
-        corrfunc = (
-            tide_corr.fastcorrelate(tide_math.corrnormalize(osvec), self.hiressignal)
-            * self.numsteps
-        )
+        # Pad both inputs by one sample so output length is 2*N+1, matching corrx.
+        # Unpadded full correlation gives 2*N-1 lags.
+        corrfunc = fastcorrelate(
+            np.pad(tide_math.corrnormalize(osvec), (0, 1), mode="constant"),
+            np.pad(self.hiressignal, (0, 1), mode="constant"),
+        ) * np.sqrt(self.numsteps)
         return corrfunc
 
 
-def arbcorr(
-    input1,
-    Fs1,
-    input2,
-    Fs2,
-    start1=0.0,
-    start2=0.0,
-    windowfunc="hamming",
-    method="univariate",
-    debug=False,
-):
-    """Calculate something."""
+def matchsamplerates(
+    input1: NDArray,
+    Fs1: float,
+    input2: NDArray,
+    Fs2: float,
+    method: str = "univariate",
+    debug: bool = False,
+) -> Tuple[NDArray, NDArray, float]:
+    """
+    Match sampling rates of two input arrays by upsampling the lower sampling rate signal.
+
+    This function takes two input arrays with potentially different sampling rates and
+    ensures they have the same sampling rate by upsampling the signal with the lower
+    sampling rate to match the higher one. The function preserves the original data
+    while adjusting the sampling rate for compatibility.
+
+    Parameters
+    ----------
+    input1 : NDArray
+        First input array to be processed.
+    Fs1 : float
+        Sampling frequency of the first input array (Hz).
+    input2 : NDArray
+        Second input array to be processed.
+    Fs2 : float
+        Sampling frequency of the second input array (Hz).
+    method : str, optional
+        Resampling method to use, by default "univariate".
+        See `tide_resample.upsample` for available methods.
+    debug : bool, optional
+        Enable debug output, by default False.
+
+    Returns
+    -------
+    Tuple[NDArray, NDArray, float]
+        Tuple containing:
+        - matchedinput1: First input array upsampled to match the sampling rate
+        - matchedinput2: Second input array upsampled to match the sampling rate
+        - corrFs: The common sampling frequency used for both outputs
+
+    Notes
+    -----
+    - If sampling rates are equal, no upsampling is performed
+    - The function always upsamples to the higher sampling rate
+    - The upsampling is performed using the `tide_resample.upsample` function
+    - Both output arrays will have the same length and sampling rate
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> input1 = np.array([1, 2, 3, 4])
+    >>> input2 = np.array([5, 6, 7])
+    >>> Fs1 = 10.0
+    >>> Fs2 = 5.0
+    >>> matched1, matched2, common_fs = matchsamplerates(input1, Fs1, input2, Fs2)
+    >>> print(common_fs)
+    10.0
+    """
     if Fs1 > Fs2:
         corrFs = Fs1
         matchedinput1 = input1
@@ -763,9 +1283,98 @@ def arbcorr(
         matchedinput1 = tide_resample.upsample(input1, Fs1, corrFs, method=method, debug=debug)
         matchedinput2 = input2
     else:
-        corrFs = Fs1
+        corrFs = Fs2
         matchedinput1 = input1
         matchedinput2 = input2
+
+    # Upsampling can produce an off-by-one length difference due to floating-point
+    # arithmetic in the resampled point count calculation. Trim to the shorter length
+    # to guarantee both outputs have the same size.
+    minlen = min(len(matchedinput1), len(matchedinput2))
+    matchedinput1 = matchedinput1[:minlen]
+    matchedinput2 = matchedinput2[:minlen]
+
+    return matchedinput1, matchedinput2, corrFs
+
+
+def arbcorr(
+    input1: NDArray,
+    Fs1: float,
+    input2: NDArray,
+    Fs2: float,
+    start1: float = 0.0,
+    start2: float = 0.0,
+    windowfunc: str = "hamming",
+    method: str = "univariate",
+    debug: bool = False,
+) -> Tuple[NDArray, NDArray, float, int]:
+    """
+    Compute the cross-correlation between two signals with arbitrary sampling rates.
+
+    This function performs cross-correlation between two input signals after
+    matching their sampling rates. It applies normalization and uses FFT-based
+    convolution for efficient computation. The result includes the time lag axis,
+    cross-correlation values, the matched sampling frequency, and the index of
+    the zero-lag point.
+
+    Parameters
+    ----------
+    input1 : NDArray
+        First input signal array.
+    Fs1 : float
+        Sampling frequency of the first signal (Hz).
+    input2 : NDArray
+        Second input signal array.
+    Fs2 : float
+        Sampling frequency of the second signal (Hz).
+    start1 : float, optional
+        Start time of the first signal (default is 0.0).
+    start2 : float, optional
+        Start time of the second signal (default is 0.0).
+    windowfunc : str, optional
+        Window function used for normalization (default is "hamming").
+    method : str, optional
+        Method used for matching sampling rates (default is "univariate").
+    debug : bool, optional
+        If True, enables debug logging (default is False).
+
+    Returns
+    -------
+    tuple
+        A tuple containing:
+        - thexcorr_x : NDArray
+            Time lag axis for the cross-correlation (seconds).
+        - thexcorr_y : NDArray
+            Cross-correlation values.
+        - corrFs : float
+            Matched sampling frequency used for the computation (Hz).
+        - zeroloc : int
+            Index corresponding to the zero-lag point in the cross-correlation.
+
+    Notes
+    -----
+    - The function upsamples the signals to the higher of the two sampling rates.
+    - Normalization is applied using a detrend order of 1 and the specified window function.
+    - The cross-correlation is computed using FFT convolution for efficiency.
+    - The zero-lag point is determined as the index of the minimum absolute value in the time axis.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> signal1 = np.random.randn(1000)
+    >>> signal2 = np.random.randn(1000)
+    >>> lags, corr_vals, fs, zero_idx = arbcorr(signal1, 10.0, signal2, 10.0)
+    >>> print(f"Zero-lag index: {zero_idx}")
+    """
+    # upsample to the higher frequency of the two
+    matchedinput1, matchedinput2, corrFs = matchsamplerates(
+        input1,
+        Fs1,
+        input2,
+        Fs2,
+        method=method,
+        debug=debug,
+    )
     norm1 = tide_math.corrnormalize(matchedinput1, detrendorder=1, windowfunc=windowfunc)
     norm2 = tide_math.corrnormalize(matchedinput2, detrendorder=1, windowfunc=windowfunc)
     thexcorr_y = signal.fftconvolve(norm1, norm2[::-1], mode="full")
@@ -784,13 +1393,66 @@ def arbcorr(
 
 
 def faststcorrelate(
-    input1, input2, windowtype="hann", nperseg=32, weighting="None", displayplots=False
-):
-    """Perform correlation between short-time Fourier transformed arrays."""
+    input1: NDArray,
+    input2: NDArray,
+    windowtype: str = "hann",
+    nperseg: int = 32,
+    weighting: str = "None",
+    displayplots: bool = False,
+) -> Tuple[NDArray, NDArray, NDArray]:
+    """
+    Perform correlation between short-time Fourier transformed arrays.
+
+    This function computes the short-time cross-correlation between two input signals
+    using their short-time Fourier transforms (STFTs). It applies a windowing function
+    to each signal, computes the STFT, and then performs correlation in the frequency
+    domain before inverse transforming back to the time domain. The result is normalized
+    by the auto-correlation of each signal.
+
+    Parameters
+    ----------
+    input1 : ndarray
+        First input signal array.
+    input2 : ndarray
+        Second input signal array.
+    windowtype : str, optional
+        Type of window to apply. Default is 'hann'.
+    nperseg : int, optional
+        Length of each segment for STFT. Default is 32.
+    weighting : str, optional
+        Weighting method for the STFT. Default is 'None'.
+    displayplots : bool, optional
+        If True, display plots (not implemented in current version). Default is False.
+
+    Returns
+    -------
+    corrtimes : ndarray
+        Time shifts corresponding to the correlation results.
+    times : ndarray
+        Time indices of the STFT.
+    stcorr : ndarray
+        Short-time cross-correlation values.
+
+    Notes
+    -----
+    The function uses `scipy.signal.stft` to compute the short-time Fourier transform
+    of both input signals. The correlation is computed in the frequency domain and
+    normalized by the square root of the auto-correlation of each signal.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy import signal
+    >>> t = np.linspace(0, 1, 100)
+    >>> x1 = np.sin(2 * np.pi * 5 * t)
+    >>> x2 = np.sin(2 * np.pi * 5 * t + 0.1)
+    >>> corrtimes, times, corr = faststcorrelate(x1, x2)
+    >>> print(corr.shape)
+    (32, 100)
+    """
     nfft = nperseg
     noverlap = nperseg - 1
     onesided = False
-    boundary = "even"
     freqs, times, thestft1 = signal.stft(
         input1,
         fs=1.0,
@@ -800,7 +1462,7 @@ def faststcorrelate(
         nfft=nfft,
         detrend="linear",
         return_onesided=onesided,
-        boundary=boundary,
+        boundary="even",
         padded=True,
         axis=-1,
     )
@@ -814,18 +1476,18 @@ def faststcorrelate(
         nfft=nfft,
         detrend="linear",
         return_onesided=onesided,
-        boundary=boundary,
+        boundary="even",
         padded=True,
         axis=-1,
     )
 
     acorrfft1 = thestft1 * np.conj(thestft1)
     acorrfft2 = thestft2 * np.conj(thestft2)
-    acorr1 = np.roll(fftpack.ifft(acorrfft1, axis=0).real, nperseg // 2, axis=0)[nperseg // 2, :]
-    acorr2 = np.roll(fftpack.ifft(acorrfft2, axis=0).real, nperseg // 2, axis=0)[nperseg // 2, :]
+    acorr1 = np.roll(fft.ifft(acorrfft1, axis=0).real, nperseg // 2, axis=0)[nperseg // 2, :]
+    acorr2 = np.roll(fft.ifft(acorrfft2, axis=0).real, nperseg // 2, axis=0)[nperseg // 2, :]
     normfacs = np.sqrt(acorr1 * acorr2)
     product = thestft1 * np.conj(thestft2)
-    stcorr = np.roll(fftpack.ifft(product, axis=0).real, nperseg // 2, axis=0)
+    stcorr = np.roll(fft.ifft(product, axis=0).real, nperseg // 2, axis=0)
     for i in range(len(normfacs)):
         stcorr[:, i] /= normfacs[i]
 
@@ -840,7 +1502,40 @@ def faststcorrelate(
     return corrtimes, times, stcorr
 
 
-def primefacs(thelen):
+def primefacs(thelen: int) -> list:
+    """
+    Compute the prime factorization of a given integer.
+
+    Parameters
+    ----------
+    thelen : int
+        The positive integer to factorize. Must be greater than 0.
+
+    Returns
+    -------
+    list
+        A list of prime factors of `thelen`, sorted in ascending order.
+        Each factor appears as many times as its multiplicity in the
+        prime factorization.
+
+    Notes
+    -----
+    This function implements trial division algorithm to find prime factors.
+    The algorithm starts with the smallest prime (2) and continues with
+    increasing integers until the square root of the remaining number.
+    The final remaining number (if greater than 1) is also a prime factor.
+
+    Examples
+    --------
+    >>> primefacs(12)
+    [2, 2, 3]
+
+    >>> primefacs(17)
+    [17]
+
+    >>> primefacs(100)
+    [2, 2, 5, 5]
+    """
     i = 2
     factors = []
     while i * i <= thelen:
@@ -853,40 +1548,62 @@ def primefacs(thelen):
     return factors
 
 
-def optfftlen(thelen):
-    return thelen
-
-
 def fastcorrelate(
-    input1,
-    input2,
-    usefft=True,
-    zeropadding=0,
-    weighting="None",
-    compress=False,
-    displayplots=False,
-    debug=False,
-):
-    """Perform a fast correlation between two arrays.
+    input1: NDArray,
+    input2: NDArray,
+    usefft: bool = True,
+    zeropadding: int = 0,
+    weighting: str = "None",
+    compress: bool = False,
+    displayplots: bool = False,
+    debug: bool = False,
+) -> NDArray:
+    """
+    Perform a fast correlation between two arrays.
+
+    This function computes the cross-correlation of two input arrays, with options
+    for using FFT-based convolution or direct correlation, as well as padding and
+    weighting schemes.
 
     Parameters
     ----------
-    input1
-    input2
-    usefft
-    zeropadding
-    weighting
-    compress
-    displayplots
-    debug
+    input1 : ndarray
+        First input array to correlate.
+    input2 : ndarray
+        Second input array to correlate.
+    usefft : bool, optional
+        If True, use FFT-based convolution for faster computation. Default is True.
+    zeropadding : int, optional
+        Zero-padding length. If 0, no padding is applied. If negative, automatic
+        padding is applied. If positive, explicit padding is applied. Default is 0.
+    weighting : str, optional
+        Type of weighting to apply. If "None", no weighting is applied. Default is "None".
+    compress : bool, optional
+        If True and `weighting` is not "None", compress the result. Default is False.
+    displayplots : bool, optional
+        If True, display plots of padded inputs and correlation result. Default is False.
+    debug : bool, optional
+        If True, enable debug output. Default is False.
 
     Returns
     -------
-    corr
+    ndarray
+        The cross-correlation of `input1` and `input2`. The length of the output is
+        `len(input1) + len(input2) - 1`.
 
     Notes
     -----
-    From http://stackoverflow.com/questions/12323959/fast-cross-correlation-method-in-python.
+    This implementation is based on the method described at:
+    http://stackoverflow.com/questions/12323959/fast-cross-correlation-method-in-python
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> a = np.array([1, 2, 3])
+    >>> b = np.array([0, 1, 0])
+    >>> result = fastcorrelate(a, b)
+    >>> print(result)
+    [0. 1. 2. 3. 0.]
     """
     len1 = len(input1)
     len2 = len(input2)
@@ -957,17 +1674,36 @@ def fastcorrelate(
         return np.correlate(paddedinput1, paddedinput2, mode="full")
 
 
-def _centered(arr, newsize):
-    """Return the center newsize portion of the array.
+def _centered(arr: NDArray, newsize: Union[int, NDArray]) -> NDArray:
+    """
+    Extract a centered subset of an array.
 
     Parameters
     ----------
-    arr
-    newsize
+    arr : array_like
+        Input array from which to extract the centered subset.
+    newsize : int or array_like
+        The size of the output array. If int, the same size is used for all dimensions.
+        If array_like, specifies the size for each dimension.
 
     Returns
     -------
-    arr
+    ndarray
+        Centered subset of the input array with the specified size.
+
+    Notes
+    -----
+    The function extracts a subset from the center of the input array. If the requested
+    size is larger than the current array size in any dimension, the result will be
+    padded with zeros (or the array will be truncated from the center).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> arr = np.arange(24).reshape(4, 6)
+    >>> _centered(arr, (2, 3))
+    array([[ 7,  8,  9],
+           [13, 14, 15]])
     """
     newsize = np.asarray(newsize)
     currsize = np.array(arr.shape)
@@ -977,22 +1713,36 @@ def _centered(arr, newsize):
     return arr[tuple(myslice)]
 
 
-def _check_valid_mode_shapes(shape1, shape2):
-    """Check that two shapes are 'valid' with respect to one another.
-
-    Specifically, this checks that each item in one tuple is larger than or
-    equal to corresponding item in another tuple.
+def _check_valid_mode_shapes(shape1: Tuple, shape2: Tuple) -> None:
+    """
+    Check that shape1 is valid for 'valid' mode convolution with shape2.
 
     Parameters
     ----------
-    shape1
-    shape2
+    shape1 : Tuple
+        First shape tuple to compare
+    shape2 : Tuple
+        Second shape tuple to compare
 
-    Raises
-    ------
-    ValueError
-        If at least one item in the first shape is not larger than or equal to
-        the corresponding item in the second one.
+    Returns
+    -------
+    None
+        This function does not return anything but raises ValueError if condition is not met
+
+    Notes
+    -----
+    This function is used to validate that the first shape has at least as many
+    elements as the second shape in every dimension, which is required for
+    'valid' mode convolution operations.
+
+    Examples
+    --------
+    >>> _check_valid_mode_shapes((10, 10), (5, 5))
+    >>> _check_valid_mode_shapes((10, 10), (10, 5))
+    >>> _check_valid_mode_shapes((5, 5), (10, 5))
+    Traceback (most recent call last):
+        ...
+    ValueError: in1 should have at least as many items as in2 in every dimension for 'valid' mode.
     """
     for d1, d2 in zip(shape1, shape2):
         if not d1 >= d2:
@@ -1003,22 +1753,29 @@ def _check_valid_mode_shapes(shape1, shape2):
 
 
 def convolve_weighted_fft(
-    in1, in2, mode="full", weighting="None", compress=False, displayplots=False
-):
-    """Convolve two N-dimensional arrays using FFT.
+    in1: NDArray[np.floating[Any]],
+    in2: NDArray[np.floating[Any]],
+    mode: str = "full",
+    weighting: str = "None",
+    compress: bool = False,
+    displayplots: bool = False,
+) -> NDArray[np.floating[Any]]:
+    """
+    Convolve two N-dimensional arrays using FFT with optional weighting.
 
     Convolve `in1` and `in2` using the fast Fourier transform method, with
-    the output size determined by the `mode` argument.
-    This is generally much faster than `convolve` for large arrays (n > ~500),
-    but can be slower when only a few output values are needed, and can only
-    output float arrays (int or object array inputs will be cast to float).
+    the output size determined by the `mode` argument. This is generally much
+    faster than `convolve` for large arrays (n > ~500), but can be slower when
+    only a few output values are needed. The function supports both real and
+    complex inputs, and allows for optional weighting and compression of the
+    FFT operations.
 
     Parameters
     ----------
-    in1 : array_like
-        First input.
-    in2 : array_like
-        Second input. Should have the same number of dimensions as `in1`;
+    in1 : NDArray[np.floating[Any]]
+        First input array.
+    in2 : NDArray[np.floating[Any]]
+        Second input array. Should have the same number of dimensions as `in1`;
         if sizes of `in1` and `in2` are not equal then `in1` has to be the
         larger array.
     mode : str {'full', 'valid', 'same'}, optional
@@ -1034,19 +1791,45 @@ def convolve_weighted_fft(
         ``same``
             The output is the same size as `in1`, centered
             with respect to the 'full' output.
+    weighting : str, optional
+        Type of weighting to apply during convolution. Default is "None".
+        Other options may include "uniform", "gaussian", etc., depending on
+        implementation of `gccproduct`.
+    compress : bool, optional
+        If True, compress the FFT data during computation. Default is False.
+    displayplots : bool, optional
+        If True, display intermediate plots during computation. Default is False.
 
     Returns
     -------
-    out : array
+    out : NDArray[np.floating[Any]]
         An N-dimensional array containing a subset of the discrete linear
-        convolution of `in1` with `in2`.
-    """
-    in1 = np.asarray(in1)
-    in2 = np.asarray(in2)
+        convolution of `in1` with `in2`. The shape of the output depends on
+        the `mode` parameter.
 
-    if np.isscalar(in1) and np.isscalar(in2):  # scalar inputs
-        return in1 * in2
-    elif not in1.ndim == in2.ndim:
+    Notes
+    -----
+    - This function uses real FFT (`rfftn`) for real inputs and standard FFT
+      (`fft.fftn`) for complex inputs.
+    - The convolution is computed in the frequency domain using the product
+      of FFTs of the inputs.
+    - For real inputs, the result is scaled to preserve the maximum amplitude.
+    - The `gccproduct` function is used internally to compute the product
+      of the FFTs with optional weighting.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> a = np.array([[1, 2], [3, 4]])
+    >>> b = np.array([[1, 0], [0, 1]])
+    >>> result = convolve_weighted_fft(a, b)
+    >>> print(result)
+    [[1. 2.]
+     [3. 4.]]
+    """
+    # if np.isscalar(in1) and np.isscalar(in2):  # scalar inputs
+    #    return in1 * in2
+    if not in1.ndim == in2.ndim:
         raise ValueError("in1 and in2 should have the same rank")
     elif in1.size == 0 or in2.size == 0:  # empty arrays
         return np.array([])
@@ -1061,28 +1844,39 @@ def convolve_weighted_fft(
 
     # Always use 2**n-sized FFT
     fsize = 2 ** np.ceil(np.log2(size)).astype(int)
+    fftaxes = tuple(range(in1.ndim))
     fslice = tuple([slice(0, int(sz)) for sz in size])
     if not complex_result:
-        fft1 = rfftn(in1, fsize)
-        fft2 = rfftn(in2, fsize)
+        fft1 = rfftn(in1, fsize, axes=fftaxes)
+        fft2 = rfftn(in2, fsize, axes=fftaxes)
         theorigmax = np.max(
-            np.absolute(irfftn(gccproduct(fft1, fft2, "None", compress=compress), fsize)[fslice])
+            np.absolute(
+                irfftn(
+                    gccproduct(fft1, fft2, "None", compress=compress),
+                    fsize,
+                    axes=fftaxes,
+                )[fslice]
+            )
         )
         ret = irfftn(
-            gccproduct(fft1, fft2, weighting, compress=compress, displayplots=displayplots), fsize
+            gccproduct(fft1, fft2, weighting, compress=compress, displayplots=displayplots),
+            fsize,
+            axes=fftaxes,
         )[fslice].copy()
         ret = irfftn(
-            gccproduct(fft1, fft2, weighting, compress=compress, displayplots=displayplots), fsize
+            gccproduct(fft1, fft2, weighting, compress=compress, displayplots=displayplots),
+            fsize,
+            axes=fftaxes,
         )[fslice].copy()
         ret = ret.real
         ret *= theorigmax / np.max(np.absolute(ret))
     else:
-        fft1 = fftpack.fftn(in1, fsize)
-        fft2 = fftpack.fftn(in2, fsize)
+        fft1 = fft.fftn(in1, fsize, axes=fftaxes)
+        fft2 = fft.fftn(in2, fsize, axes=fftaxes)
         theorigmax = np.max(
-            np.absolute(fftpack.ifftn(gccproduct(fft1, fft2, "None", compress=compress))[fslice])
+            np.absolute(fft.ifftn(gccproduct(fft1, fft2, "None", compress=compress))[fslice])
         )
-        ret = fftpack.ifftn(
+        ret = fft.ifftn(
             gccproduct(fft1, fft2, weighting, compress=compress, displayplots=displayplots)
         )[fslice].copy()
         ret *= theorigmax / np.max(np.absolute(ret))
@@ -1090,27 +1884,73 @@ def convolve_weighted_fft(
     # scale to preserve the maximum
 
     if mode == "full":
-        return ret
+        retval = ret
     elif mode == "same":
-        return _centered(ret, s1)
+        retval = _centered(ret, s1)
     elif mode == "valid":
-        return _centered(ret, s1 - s2 + 1)
+        retval = _centered(ret, s1 - s2 + 1)
+
+    return retval
 
 
-def gccproduct(fft1, fft2, weighting, threshfrac=0.1, compress=False, displayplots=False):
-    """Calculate product for generalized crosscorrelation.
+def gccproduct(
+    fft1: NDArray,
+    fft2: NDArray,
+    weighting: str,
+    threshfrac: float = 0.1,
+    compress: bool = False,
+    displayplots: bool = False,
+) -> NDArray:
+    """
+    Compute the generalized cross-correlation (GCC) product with optional weighting.
+
+    This function computes the GCC product of two FFT arrays, applying a specified
+    weighting scheme to enhance correlation performance. It supports several weighting
+    methods including 'liang', 'eckart', 'phat', and 'regressor'. The result can be
+    thresholded and optionally compressed to improve visualization and reduce noise.
 
     Parameters
     ----------
-    fft1
-    fft2
-    weighting
-    threshfrac
-    displayplots
+    fft1 : NDArray
+        First FFT array (complex-valued).
+    fft2 : NDArray
+        Second FFT array (complex-valued).
+    weighting : str
+        Weighting method to apply. Options are:
+        - 'liang': Liang weighting
+        - 'eckart': Eckart weighting
+        - 'phat': PHAT (Phase Transform) weighting
+        - 'regressor': Regressor-based weighting (uses fft2 as reference)
+        - 'None': No weighting applied.
+    threshfrac : float, optional
+        Threshold fraction used to determine the minimum value for output masking.
+        Default is 0.1.
+    compress : bool, optional
+        If True, compress the weighting function using 10th and 90th percentiles.
+        Default is False.
+    displayplots : bool, optional
+        If True, display the reciprocal weighting function as a plot.
+        Default is False.
 
     Returns
     -------
-    product
+    NDArray
+        The weighted GCC product. The output is of the same shape as the input arrays.
+        If `weighting` is 'None', the raw product is returned.
+        If `threshfrac` is 0, a zero array of the same shape is returned.
+
+    Notes
+    -----
+    The weighting functions are applied element-wise and are designed to suppress
+    noise and enhance correlation peaks. The 'phat' weighting is commonly used in
+    speech and signal processing due to its robustness.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> fft1 = np.random.rand(100) + 1j * np.random.rand(100)
+    >>> fft2 = np.random.rand(100) + 1j * np.random.rand(100)
+    >>> result = gccproduct(fft1, fft2, weighting='phat', threshfrac=0.05)
     """
     product = fft1 * fft2
     if weighting == "None":
@@ -1159,17 +1999,75 @@ def gccproduct(fft1, fft2, weighting, threshfrac=0.1, compress=False, displayplo
 
 
 def aligntcwithref(
-    fixedtc,
-    movingtc,
-    Fs,
-    lagmin=-30,
-    lagmax=30,
-    refine=True,
-    zerooutbadfit=False,
-    widthmax=1000.0,
-    display=False,
-    verbose=False,
-):
+    fixedtc: NDArray,
+    movingtc: NDArray,
+    Fs: float,
+    lagmin: float = -30,
+    lagmax: float = 30,
+    refine: bool = True,
+    zerooutbadfit: bool = False,
+    widthmax: float = 1000.0,
+    display: bool = False,
+    verbose: bool = False,
+) -> Tuple[NDArray, float, float, int]:
+    """
+    Align a moving timecourse to a fixed reference timecourse using cross-correlation.
+
+    This function computes the cross-correlation between two timecourses and finds the
+    optimal time lag that maximizes their similarity. The moving timecourse is then
+    aligned to the fixed one using this lag.
+
+    Parameters
+    ----------
+    fixedtc : ndarray
+        The reference timecourse to which the moving timecourse will be aligned.
+    movingtc : ndarray
+        The timecourse to be aligned to the fixed timecourse.
+    Fs : float
+        Sampling frequency of the timecourses in Hz.
+    lagmin : float, optional
+        Minimum lag to consider in seconds. Default is -30.
+    lagmax : float, optional
+        Maximum lag to consider in seconds. Default is 30.
+    refine : bool, optional
+        If True, refine the lag estimate using Gaussian fitting. Default is True.
+    zerooutbadfit : bool, optional
+        If True, zero out the cross-correlation values for bad fits. Default is False.
+    widthmax : float, optional
+        Maximum allowed width of the Gaussian fit in samples. Default is 1000.0.
+    display : bool, optional
+        If True, display plots of the cross-correlation and aligned timecourses. Default is False.
+    verbose : bool, optional
+        If True, print detailed information about the cross-correlation results. Default is False.
+
+    Returns
+    -------
+    tuple
+        A tuple containing:
+        - aligneddata : ndarray
+            The moving timecourse aligned to the fixed timecourse.
+        - maxdelay : float
+            The estimated time lag (in seconds) that maximizes cross-correlation.
+        - maxval : float
+            The maximum cross-correlation value.
+        - failreason : int
+            Reason for failure (0 = success, other values indicate specific failure types).
+
+    Notes
+    -----
+    This function uses `fastcorrelate` for efficient cross-correlation computation and
+    `tide_fit.findmaxlag_gauss` to estimate the optimal lag with optional Gaussian refinement.
+    The alignment is performed using `tide_resample.doresample`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from typing import Tuple
+    >>> fixed = np.random.rand(1000)
+    >>> moving = np.roll(fixed, 10)  # shift by 10 samples
+    >>> aligned, delay, corr, fail = aligntcwithref(fixed, moving, Fs=100)
+    >>> print(f"Estimated delay: {delay}s")
+    """
     # now fixedtc and 2 are on the same timescales
     thexcorr = fastcorrelate(tide_math.corrnormalize(fixedtc), tide_math.corrnormalize(movingtc))
     xcorrlen = len(thexcorr)

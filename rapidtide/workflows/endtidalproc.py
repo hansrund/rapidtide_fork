@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -19,19 +19,85 @@
 import argparse
 import bisect
 import sys
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+from numpy.typing import NDArray
 
 import rapidtide.fit as tide_fit
 import rapidtide.io as tide_io
 from rapidtide.workflows.parser_funcs import invert_float, is_float
 
 
-def phase(mcv):
+def phase(mcv: Any) -> None:
+    """
+    Compute the phase angle of a complex number.
+
+    This function calculates the phase angle (also known as the argument) of a complex number
+    using the arctan2 function, which correctly handles all quadrants and special cases.
+
+    Parameters
+    ----------
+    mcv : Any
+        A complex number or array of complex numbers for which to compute the phase angle.
+        Can be a scalar complex number or an array-like object containing complex numbers.
+
+    Returns
+    -------
+    ndarray or scalar
+        The phase angle in radians. The return type matches the input type, returning
+        a scalar for scalar input or an array for array input. The phase angle is
+        in the range [-π, π].
+
+    Notes
+    -----
+    This function uses `np.arctan2(mcv.imag, mcv.real)` which is preferred over
+    `np.arctan(mcv.imag/mcv.real)` because it correctly handles the quadrant
+    and avoids division by zero errors.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> phase(1+1j)
+    0.7853981633974483
+
+    >>> phase(-1-1j)
+    -2.3561944901923448
+
+    >>> phase(np.array([1+1j, -1-1j]))
+    array([ 0.78539816, -2.35619449])
+    """
     return np.arctan2(mcv.imag, mcv.real)
 
 
-def _get_parser():
+def _get_parser() -> Any:
+    """
+    Create and configure an argument parser for the endtidalproc command-line tool.
+
+    This function sets up an `argparse.ArgumentParser` with various options to process
+    a gas trace and generate an endtidal waveform. It supports input and output file
+    specifications, sample rate configuration, time range settings, threshold for
+    peak detection, and debugging options.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser object with all required and optional arguments.
+
+    Notes
+    -----
+    The parser is designed for use with the `endtidalproc` program and includes
+    mutually exclusive group for specifying sample rate either as frequency or
+    time step. The default sample rate is 1 Hz.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['input.txt', 'output.txt'])
+    >>> print(args.infilename)
+    'input.txt'
+    """
     # get the command line parameters
     parser = argparse.ArgumentParser(
         prog="endtidalproc",
@@ -90,7 +156,7 @@ def _get_parser():
         dest="thresh",
         metavar="PCT",
         type=float,
-        help="Amount of fall (or rise) needed, in percent, to recognize a peak (or trough).",
+        help="Amount of fall (or rise) needed, in percent, to recognize a peak (or through).",
         default=1.0,
     )
     parser.add_argument(
@@ -104,7 +170,45 @@ def _get_parser():
     return parser
 
 
-def process_args():
+def process_args(args: Any) -> None:
+    """
+    Process and validate input arguments for audio processing.
+
+    This function sets default values for samplerate if not provided and
+    optionally prints debug information when debug mode is enabled.
+
+    Parameters
+    ----------
+    args : Any
+        An object containing audio processing arguments. Expected to have
+        attributes 'samplerate' and 'debug'. The 'samplerate' attribute
+        will be set to 1.0 if None, and 'debug' controls whether to print
+        argument information.
+
+    Returns
+    -------
+    None
+        This function modifies the args object in-place and does not return
+        a value.
+
+    Notes
+    -----
+    - The function modifies the input args object in-place
+    - Default samplerate is set to 1.0 when None is provided
+    - Debug output is printed only when args.debug is True
+
+    Examples
+    --------
+    >>> class Args:
+    ...     def __init__(self):
+    ...         self.samplerate = None
+    ...         self.debug = True
+    ...
+    >>> args = Args()
+    >>> process_args(args)
+    >>> print(args.samplerate)
+    1.0
+    """
     if args.samplerate is None:
         args.samplerate = 1.0
 
@@ -116,8 +220,44 @@ def process_args():
     return args
 
 
-def endtidalproc(args):
-    args = process_args()
+def endtidalproc() -> None:
+    """
+    Process tidal data to detect peaks and interpolate values for output.
+
+    This function reads a time series from an input file, detects either maximum or
+    minimum peaks depending on whether the data is treated as oxygen or CO2, and
+    interpolates the peak values over the full time range. The resulting interpolated
+    data is written to an output file.
+
+    Parameters
+    ----------
+    None
+        This function does not take any direct parameters. It reads from command-line
+        arguments and system input files.
+
+    Returns
+    -------
+    None
+        This function does not return any value. It performs file I/O operations
+        and writes results to disk.
+
+    Notes
+    -----
+    - The function uses `bisect` to find the start and end indices in the time vector
+      based on the provided start and end times.
+    - Peak detection is performed using `tide_fit.peakdetect`, which requires a
+      `lookahead` parameter and a `delta` threshold.
+    - If `isoxygen` is True, the function detects minimum peaks; otherwise, it detects
+      maximum peaks.
+    - The interpolation is linear between detected peaks.
+
+    Examples
+    --------
+    >>> endtidalproc()
+    Fitting trace as CO2
+    endtime must be greater then starttime;
+    """
+    args = process_args(_get_parser().parse_args(sys.argv[1:]))
 
     if args.isoxygen:
         print("Fitting trace as oxygen")
@@ -138,12 +278,12 @@ def endtidalproc(args):
     args.thestarttime = xvec[thestartpoint]
     args.theendtime = xvec[theendpoint]
 
-    # set parameters - maxtime is the longest to look ahead for a peak (or trough) in seconds
+    # set parameters - maxtime is the longest to look ahead for a peak (or through) in seconds
     # lookahead should be '(samples / period) / f' where '4 >= f >= 1.25' might be a good value
     maxtime = 1.0
     f = 2.0
     lookaheadval = int((args.samplerate * maxtime) / f)
-    maxpeaks, minpeaks = tide_fit.peakdetect(yvec, lookahead=lookaheadval, delta=args.thethresh)
+    maxpeaks, minpeaks = tide_fit.peakdetect(yvec, lookahead=lookaheadval, delta=args.thresh)
 
     if args.isoxygen:
         peaklist = minpeaks
@@ -166,4 +306,4 @@ def endtidalproc(args):
 
 
 if __name__ == "__main__":
-    main()
+    endtidalproc()

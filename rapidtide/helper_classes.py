@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,18 +17,13 @@
 #
 #
 import sys
-import warnings
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
-from numpy.polynomial import Polynomial
-from scipy.optimize import curve_fit
-from statsmodels.robust import mad
+from numpy.typing import NDArray
 
-import rapidtide.correlate as tide_corr
-import rapidtide.filter as tide_filt
-import rapidtide.fit as tide_fit
 import rapidtide.miscmath as tide_math
 import rapidtide.util as tide_util
 
@@ -44,10 +39,48 @@ class fMRIDataset:
     slicesize = None
     numvox = None
     numskip = 0
+    validvoxels = None
 
-    def __init__(self, thedata, zerodata=False, copydata=False, numskip=0):
+    def __init__(
+        self, thedata: NDArray, zerodata: bool = False, copydata: bool = False, numskip: int = 0
+    ) -> None:
+        """
+        Initialize the fMRIDataset with data and configuration parameters.
+
+        Parameters
+        ----------
+        thedata : NDArray
+            The input data array to be stored in the object.
+        zerodata : bool, optional
+            If True, initializes the data with zeros instead of copying the input data.
+            Default is False.
+        copydata : bool, optional
+            If True and zerodata is False, creates a copy of the input data.
+            If False and zerodata is False, uses the input data directly.
+            Default is False.
+        numskip : int, optional
+            Number of elements to skip during processing. Default is 0.
+
+        Returns
+        -------
+        None
+            This method does not return any value.
+
+        Notes
+        -----
+        The initialization process involves:
+        1. Setting the data based on the zerodata and copydata parameters
+        2. Calling getsizes() to determine data dimensions
+        3. Calling setnumskip() to configure the skip parameter
+
+        Examples
+        --------
+        >>> obj = MyClass(data_array)
+        >>> obj = MyClass(data_array, zerodata=True)
+        >>> obj = MyClass(data_array, copydata=True, numskip=5)
+        """
         if zerodata:
-            self.thedata = thedata * 0.0
+            self.thedata = np.zeros_like(thedata)
         else:
             if copydata:
                 self.thedata = thedata + 0.0
@@ -56,31 +89,218 @@ class fMRIDataset:
         self.getsizes()
         self.setnumskip(numskip)
 
-    def getsizes(self):
+    def getsizes(self) -> None:
+        """
+        Calculate and store various size parameters from data shape.
+
+        This method extracts dimensional information from the data shape and computes
+        derived quantities such as slice size and total number of voxels. It handles
+        both 3D and 4D data arrays by checking for the presence of a fourth dimension.
+
+        Parameters
+        ----------
+        self : object
+            The instance containing the data array in `thedata` attribute.
+            The `thedata` attribute should be a numpy array with shape (xsize, ysize, numslices, [realtimepoints])
+
+        Returns
+        -------
+        None
+            This method does not return any value but modifies the instance attributes.
+
+        Notes
+        -----
+        The method assumes `thedata` is a numpy array with at least 2 dimensions.
+        If the fourth dimension is not present, `realtimepoints` is set to 1.
+
+        Attributes Modified
+        -------------------
+        theshape : tuple
+            The shape of the data array
+        xsize : int
+            Size of the first dimension (x-axis)
+        ysize : int
+            Size of the second dimension (y-axis)
+        numslices : int
+            Number of slices (third dimension)
+        realtimepoints : int
+            Number of real-time points (fourth dimension, default 1)
+        slicesize : int
+            Product of xsize and ysize (number of pixels per slice)
+        numvox : int
+            Total number of voxels (slicesize * numslices)
+
+        Examples
+        --------
+        >>> # Assuming self.thedata has shape (64, 64, 30, 100)
+        >>> getsizes(self)
+        >>> print(self.xsize, self.ysize, self.numslices, self.realtimepoints)
+        64 64 30 100
+        >>> print(self.slicesize, self.numvox)
+        4096 122880
+        """
         self.theshape = self.thedata.shape
         self.xsize = self.theshape[0]
         self.ysize = self.theshape[1]
         self.numslices = self.theshape[2]
         try:
             self.realtimepoints = self.theshape[3]
-        except KeyError:
+        except IndexError:
             self.realtimepoints = 1
         self.slicesize = self.xsize * self.ysize
         self.numvox = self.slicesize * self.numslices
 
-    def setnumskip(self, numskip):
+    def setnumskip(self, numskip: int) -> None:
+        """
+        Set the number of timepoints to skip and update the timepoints accordingly.
+
+        This method updates the internal `numskip` attribute and recalculates the
+        `timepoints` by subtracting the number of skipped points from the real timepoints.
+
+        Parameters
+        ----------
+        numskip : int
+            The number of timepoints to skip. This value is stored in the `numskip`
+            attribute and used to compute the effective timepoints.
+
+        Returns
+        -------
+        None
+            This method modifies the object's attributes in-place and does not return
+            any value.
+
+        Notes
+        -----
+        The `timepoints` attribute is automatically updated to reflect the difference
+        between `realtimepoints` and `numskip`. This is typically used in time-series
+        analysis where certain initial timepoints are excluded from calculations.
+
+        Examples
+        --------
+        >>> obj.setnumskip(5)
+        >>> print(obj.numskip)
+        5
+        >>> print(obj.timepoints)
+        # Will show the difference between realtimepoints and 5
+        """
         self.numskip = numskip
         self.timepoints = self.realtimepoints - self.numskip
 
-    def byslice(self):
+    def setvalid(self, validvoxels: NDArray) -> None:
+        """
+        Set the valid voxels for the object.
+
+        Parameters
+        ----------
+        validvoxels : NDArray
+            Array containing the valid voxel indices or flags indicating
+            which voxels are considered valid in the dataset.
+
+        Returns
+        -------
+        None
+            This method does not return any value.
+
+        Notes
+        -----
+        This method assigns the provided array to the internal `validvoxels` attribute
+        of the object, which is typically used to filter or validate voxel data
+        during processing operations.
+
+        Examples
+        --------
+        >>> obj = MyClass()
+        >>> valid_voxels = np.array([1, 2, 3, 5, 8])
+        >>> obj.setvalid(valid_voxels)
+        >>> print(obj.validvoxels)
+        [1 2 3 5 8]
+        """
+        self.validvoxels = validvoxels
+
+    def byslice(self) -> NDArray:
+        """
+        Return data sliced along the time dimension with specified skip.
+
+        This method extracts data from the internal `thedata` array, skipping
+        the first `numskip` time points and reshaping the result into a
+        standardized 3D array format.
+
+        Returns
+        -------
+        NDArray
+            3D array with shape (slicesize, numslices, timepoints) containing
+            the sliced data with skipped time points removed.
+
+        Notes
+        -----
+        The returned array is reshaped from the original data structure to
+        facilitate further processing and analysis. The slicing operation
+        removes the first `numskip` time points from the original data.
+
+        Examples
+        --------
+        >>> result = obj.byslice()
+        >>> print(result.shape)
+        (100, 50, 200)
+        """
         return self.thedata[:, :, :, self.numskip :].reshape(
             (self.slicesize, self.numslices, self.timepoints)
         )
 
-    def byvol(self):
+    def byvol(self) -> NDArray:
+        """
+        Reshape data to volume-time format.
+
+        This method extracts a subset of data along the fourth dimension and reshapes
+        it into a 2D array where rows represent voxels and columns represent timepoints.
+
+        Returns
+        -------
+        NDArray
+            2D array of shape (numvox, timepoints) containing the reshaped data.
+            Each row corresponds to a voxel and each column to a timepoint.
+
+        Notes
+        -----
+        The method slices the data array starting from index `numskip` along the
+        fourth dimension and reshapes the remaining data into a 2D structure.
+
+        Examples
+        --------
+        >>> result = obj.byvol()
+        >>> print(result.shape)
+        (numvox, timepoints)
+        """
         return self.thedata[:, :, :, self.numskip :].reshape((self.numvox, self.timepoints))
 
-    def byvox(self):
+    def byvox(self) -> NDArray:
+        """
+        Return voxel data with skip dimension sliced.
+
+        This method extracts a subset of the fourth dimension from the internal
+        data array, starting from the index specified by `numskip` to the end.
+
+        Returns
+        -------
+        NDArray
+            A numpy array containing the voxel data with the fourth dimension
+            sliced from `numskip` index to the end. The shape will be
+            (self.thedata.shape[0], self.thedata.shape[1], self.thedata.shape[2],
+            self.thedata.shape[3] - self.numskip)
+
+        Notes
+        -----
+        The function assumes that `self.thedata` is a 4-dimensional numpy array
+        and `self.numskip` is a non-negative integer less than the size of the
+        fourth dimension.
+
+        Examples
+        --------
+        >>> # Assuming self.thedata has shape (10, 10, 10, 20) and self.numskip = 5
+        >>> result = self.byvox()
+        >>> result.shape
+        (10, 10, 10, 15)
+        """
         return self.thedata[:, :, :, self.numskip :]
 
 
@@ -98,17 +318,58 @@ class ProbeRegressor:
 
     def __init__(
         self,
-        inputvec,
-        inputfreq,
-        targetperiod,
-        targetpoints,
-        targetstartpoint,
-        targetoversample=1,
-        inputstart=0.0,
-        inputoffset=0.0,
-        targetstart=0.0,
-        targetoffset=0.0,
-    ):
+        inputvec: NDArray,
+        inputfreq: float,
+        targetperiod: float,
+        targetpoints: int,
+        targetstartpoint: int,
+        targetoversample: int = 1,
+        inputstart: float = 0.0,
+        inputoffset: float = 0.0,
+        targetstart: float = 0.0,
+        targetoffset: float = 0.0,
+    ) -> None:
+        """
+        Initialize the object with input and target parameters.
+
+        Parameters
+        ----------
+        inputvec : NDArray
+            Input vector data array
+        inputfreq : float
+            Input frequency in Hz
+        targetperiod : float
+            Target period in seconds
+        targetpoints : int
+            Number of target points
+        targetstartpoint : int
+            Starting point index for target
+        targetoversample : int, optional
+            Oversampling factor for target (default is 1)
+        inputstart : float, optional
+            Starting time for input (default is 0.0)
+        inputoffset : float, optional
+            Input offset value (default is 0.0)
+        targetstart : float, optional
+            Starting time for target (default is 0.0)
+        targetoffset : float, optional
+            Target offset value (default is 0.0)
+
+        Returns
+        -------
+        None
+            This method initializes the object attributes and does not return any value.
+
+        Notes
+        -----
+        This constructor sets up the input vector with specified frequency and start time,
+        and initializes target parameters for subsequent processing.
+
+        Examples
+        --------
+        >>> obj = MyClass(inputvec=np.array([1, 2, 3]), inputfreq=100.0,
+        ...               targetperiod=0.1, targetpoints=100, targetstartpoint=0)
+        """
         self.inputoffset = inputoffset
         self.setinputvec(inputvec, inputfreq, inputstart=inputstart)
         self.targetperiod = targetperiod
@@ -116,340 +377,122 @@ class ProbeRegressor:
         self.targetoversample = targetoversample
         self.targetpoints = targetpoints
         self.targetstartpoint = targetstartpoint
+        self.targetstart = targetstart
+        self.targetoffset = targetoffset
 
-    def setinputvec(self, inputvec, inputfreq, inputstart=0.0):
+    def setinputvec(self, inputvec: NDArray, inputfreq: float, inputstart: float = 0.0) -> None:
+        """
+        Set the input vector and associated parameters for the object.
+
+        Parameters
+        ----------
+        inputvec : NDArray
+            The input vector to be set. This is typically a numpy array containing
+            the input signal or data values.
+        inputfreq : float
+            The input frequency value. This represents the sampling frequency or
+            frequency parameter associated with the input vector.
+        inputstart : float, optional
+            The starting time or phase value for the input. Default is 0.0.
+
+        Returns
+        -------
+        None
+            This method does not return any value.
+
+        Notes
+        -----
+        This method assigns the provided input vector and its associated parameters
+        to instance variables. The input vector is stored as ``self.inputvec``,
+        the frequency as ``self.inputfreq``, and the start value as ``self.inputstart``.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> obj = MyClass()
+        >>> input_data = np.array([1, 2, 3, 4, 5])
+        >>> obj.setinputvec(input_data, inputfreq=10.0, inputstart=0.5)
+        >>> print(obj.inputvec)
+        [1 2 3 4 5]
+        >>> print(obj.inputfreq)
+        10.0
+        >>> print(obj.inputstart)
+        0.5
+        """
         self.inputvec = inputvec
         self.inputfreq = inputfreq
         self.inputstart = inputstart
 
-    def makeinputtimeaxis(self):
-        self.inputtimeaxis = np.linspace(0.0, len(self.inputvec)) / self.inputfreq - (
-            self.inputstarttime + self.inputoffset
+    def makeinputtimeaxis(self) -> None:
+        """
+        Create input time axis based on input vector properties.
+
+        This method generates a time axis for input data by linearly spacing
+        from 0 to the length of the input vector, normalized by the input frequency,
+        and adjusted by the input start time and offset.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place by setting the `inputtimeaxis` attribute.
+
+        Notes
+        -----
+        The time axis is calculated as:
+        ``inputtimeaxis = np.linspace(0.0, len(inputvec)) / inputfreq - (inputstart + inputoffset)``
+
+        Examples
+        --------
+        >>> obj.makeinputtimeaxis()
+        >>> print(obj.inputtimeaxis)
+        [ 0.          0.001       0.002 ...  0.998       0.999      ]
+        """
+        self.inputtimeaxis = np.arange(len(self.inputvec), dtype=np.float64) / self.inputfreq - (
+            self.inputstart + self.inputoffset
         )
 
-    def maketargettimeaxis(self):
+    def maketargettimeaxis(self) -> None:
+        """
+        Create a target time axis for signal processing.
+
+        This method generates a linearly spaced time axis based on the target period,
+        start point, and number of points specified in the object's attributes.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            This method modifies the object's `targettimeaxis` attribute in-place.
+
+        Notes
+        -----
+        The time axis is generated using `numpy.linspace` with the following parameters:
+        - Start point: `targetperiod * targetstartpoint`
+        - End point: `targetperiod * targetstartpoint + targetperiod * targetpoints`
+        - Number of points: `targetpoints`
+        - Endpoint: True
+
+        Examples
+        --------
+        >>> obj.maketargettimeaxis()
+        >>> print(obj.targettimeaxis)
+        [0.   0.1  0.2  0.3  0.4]
+        """
         self.targettimeaxis = np.linspace(
-            self.targetperiod * self.targetstartpoint,
-            self.targetperiod * self.targetstartpoint + self.targetperiod * self.targetpoints,
+            self.targetperiod * self.targetstartpoint - (self.targetstart + self.targetoffset),
+            self.targetperiod * self.targetstartpoint
+            + self.targetperiod * self.targetpoints
+            - (self.targetstart + self.targetoffset),
             num=self.targetpoints,
             endpoint=True,
         )
-
-
-class SimilarityFunctionator:
-    reftc = None
-    prepreftc = None
-    testtc = None
-    preptesttc = None
-    timeaxis = None
-    similarityfunclen = 0
-    datavalid = False
-    timeaxisvalid = False
-    similarityfuncorigin = 0
-
-    def __init__(
-        self,
-        Fs=0.0,
-        similarityfuncorigin=0,
-        lagmininpts=0,
-        lagmaxinpts=0,
-        ncprefilter=None,
-        negativegradient=False,
-        reftc=None,
-        reftcstart=0.0,
-        detrendorder=1,
-        debug=False,
-    ):
-        self.Fs = Fs
-        self.similarityfuncorigin = similarityfuncorigin
-        self.lagmininpts = lagmininpts
-        self.lagmaxinpts = lagmaxinpts
-        self.ncprefilter = ncprefilter
-        self.negativegradient = negativegradient
-        self.reftc = reftc
-        self.detrendorder = detrendorder
-        self.debug = debug
-        if self.reftc is not None:
-            self.setreftc(self.reftc)
-            self.reftcstart = reftcstart
-
-    def preptc(self, thetc, isreftc=False):
-        # prepare timecourse by filtering, normalizing, detrending, and applying a window function
-        if isreftc or (not self.negativegradient):
-            thenormtc = tide_math.corrnormalize(
-                self.ncprefilter.apply(self.Fs, thetc),
-                detrendorder=self.detrendorder,
-                windowfunc=self.windowfunc,
-            )
-        else:
-            thenormtc = tide_math.corrnormalize(
-                -np.gradient(self.ncprefilter.apply(self.Fs, thetc)),
-                detrendorder=self.detrendorder,
-                windowfunc=self.windowfunc,
-            )
-        return thenormtc
-
-    def trim(self, vector):
-        return vector[
-            self.similarityfuncorigin
-            - self.lagmininpts : self.similarityfuncorigin
-            + self.lagmaxinpts
-        ]
-
-    def getfunction(self, trim=True):
-        if self.datavalid:
-            if trim:
-                return (
-                    self.trim(self.thesimfunc),
-                    self.trim(self.timeaxis),
-                    self.theglobalmax,
-                )
-            else:
-                return self.thesimfunc, self.timeaxis, self.theglobalmax
-        else:
-            if self.timeaxisvalid:
-                if trim:
-                    return None, self.trim(self.timeaxis), None
-                else:
-                    return None, self.timeaxis, None
-            else:
-                print("must calculate similarity function before fetching data")
-                return None, None, None
-
-
-class MutualInformationator(SimilarityFunctionator):
-    def __init__(
-        self,
-        windowfunc="hamming",
-        norm=True,
-        madnorm=False,
-        smoothingtime=-1.0,
-        bins=20,
-        sigma=0.25,
-        *args,
-        **kwargs,
-    ):
-        self.windowfunc = windowfunc
-        self.norm = norm
-        self.madnorm = madnorm
-        self.bins = bins
-        self.sigma = sigma
-        self.smoothingtime = smoothingtime
-        self.smoothingfilter = tide_filt.NoncausalFilter(filtertype="arb")
-        self.mi_norm = 1.0
-        if self.smoothingtime > 0.0:
-            self.smoothingfilter.setfreqs(
-                0.0, 0.0, 1.0 / self.smoothingtime, 1.0 / self.smoothingtime
-            )
-        super(MutualInformationator, self).__init__(*args, **kwargs)
-
-    def setlimits(self, lagmininpts, lagmaxinpts):
-        self.lagmininpts = lagmininpts
-        self.lagmaxinpts = lagmaxinpts
-        origpadtime = self.smoothingfilter.getpadtime()
-        timespan = self.timeaxis[-1] - self.timeaxis[0]
-        newpadtime = np.min([origpadtime, timespan])
-        if newpadtime < origpadtime:
-            print("lowering smoothing filter pad time to", newpadtime)
-            self.smoothingfilter.setpadtime(newpadtime)
-
-    def setbins(self, bins):
-        self.bins = bins
-
-    def setreftc(self, reftc, offset=0.0):
-        self.reftc = reftc + 0.0
-        self.prepreftc = self.preptc(self.reftc, isreftc=True)
-
-        self.timeaxis, self.automi, self.similarityfuncorigin = tide_corr.cross_mutual_info(
-            self.prepreftc,
-            self.prepreftc,
-            Fs=self.Fs,
-            fast=True,
-            negsteps=self.lagmininpts,
-            possteps=self.lagmaxinpts,
-            returnaxis=True,
-        )
-
-        self.timeaxis -= offset
-        self.similarityfunclen = len(self.timeaxis)
-        self.timeaxisvalid = True
-        self.datavalid = False
-        self.mi_norm = np.nan_to_num(1.0 / np.max(self.automi))
-        if self.debug:
-            print(f"MutualInformationator setreftc: {len(self.timeaxis)=}")
-            print(f"MutualInformationator setreftc: {self.timeaxis}")
-            print(f"MutualInformationator setreftc: {self.mi_norm=}")
-
-    def getnormfac(self):
-        return self.mi_norm
-
-    def run(self, thetc, locs=None, trim=True, gettimeaxis=True):
-        if len(thetc) != len(self.reftc):
-            print(
-                "timecourses are of different sizes:",
-                len(thetc),
-                "!=",
-                len(self.reftc),
-                "- exiting",
-            )
-            sys.exit()
-
-        self.testtc = thetc
-        self.preptesttc = self.preptc(self.testtc)
-
-        if locs is not None:
-            gettimeaxis = True
-
-        # now calculate the similarity function
-        if trim:
-            retvals = tide_corr.cross_mutual_info(
-                self.preptesttc,
-                self.prepreftc,
-                norm=self.norm,
-                negsteps=self.lagmininpts,
-                possteps=self.lagmaxinpts,
-                locs=locs,
-                madnorm=self.madnorm,
-                returnaxis=gettimeaxis,
-                fast=True,
-                Fs=self.Fs,
-                sigma=self.sigma,
-                bins=self.bins,
-            )
-        else:
-            retvals = tide_corr.cross_mutual_info(
-                self.preptesttc,
-                self.prepreftc,
-                norm=self.norm,
-                negsteps=-1,
-                possteps=-1,
-                locs=locs,
-                madnorm=self.madnorm,
-                returnaxis=gettimeaxis,
-                fast=True,
-                Fs=self.Fs,
-                sigma=self.sigma,
-                bins=self.bins,
-            )
-        if gettimeaxis:
-            self.timeaxis, self.thesimfunc, self.similarityfuncorigin = (
-                retvals[0],
-                retvals[1],
-                retvals[2],
-            )
-            self.timeaxisvalid = True
-        else:
-            self.thesimfunc = retvals[0]
-
-        # normalize
-        self.thesimfunc *= self.mi_norm
-
-        if locs is not None:
-            return self.thesimfunc
-
-        if self.smoothingtime > 0.0:
-            self.thesimfunc = self.smoothingfilter.apply(self.Fs, self.thesimfunc)
-
-        self.similarityfunclen = len(self.thesimfunc)
-        if trim:
-            self.similarityfuncorigin = self.lagmininpts + 1
-        else:
-            self.similarityfuncorigin = self.similarityfunclen // 2 + 1
-
-        # find the global maximum value
-        self.theglobalmax = np.argmax(self.thesimfunc)
-        self.datavalid = True
-
-        # make a dummy filtered baseline
-        self.filteredbaseline = self.thesimfunc * 0.0
-
-        if trim:
-            return (
-                self.trim(self.thesimfunc),
-                self.trim(self.timeaxis),
-                self.theglobalmax,
-            )
-        else:
-            return self.thesimfunc, self.timeaxis, self.theglobalmax
-
-
-class Correlator(SimilarityFunctionator):
-    def __init__(
-        self,
-        windowfunc="hamming",
-        corrweighting="None",
-        corrpadding=0,
-        baselinefilter=None,
-        *args,
-        **kwargs,
-    ):
-        self.windowfunc = windowfunc
-        self.corrweighting = corrweighting
-        self.corrpadding = corrpadding
-        self.baselinefilter = baselinefilter
-        super(Correlator, self).__init__(*args, **kwargs)
-
-    def setlimits(self, lagmininpts, lagmaxinpts):
-        self.lagmininpts = lagmininpts
-        self.lagmaxinpts = lagmaxinpts
-
-    def setreftc(self, reftc, offset=0.0):
-        self.reftc = reftc + 0.0
-        self.prepreftc = self.preptc(self.reftc, isreftc=True)
-        self.similarityfunclen = len(self.reftc) * 2 - 1
-        self.similarityfuncorigin = self.similarityfunclen // 2 + 1
-
-        # make the reference time axis
-        self.timeaxis = (
-            np.arange(0.0, self.similarityfunclen) * (1.0 / self.Fs)
-            - ((self.similarityfunclen - 1) * (1.0 / self.Fs)) / 2.0
-        ) - offset
-        self.timeaxisvalid = True
-        self.datavalid = False
-
-    def run(self, thetc, trim=True):
-        if len(thetc) != len(self.reftc):
-            print(
-                "timecourses are of different sizes:",
-                len(thetc),
-                "!=",
-                len(self.reftc),
-                "- exiting",
-            )
-            sys.exit()
-
-        self.testtc = thetc
-        self.preptesttc = self.preptc(self.testtc)
-
-        # now actually do the correlation
-        self.thesimfunc = tide_corr.fastcorrelate(
-            self.preptesttc,
-            self.prepreftc,
-            usefft=True,
-            weighting=self.corrweighting,
-            zeropadding=self.corrpadding,
-            debug=self.debug,
-        )
-        self.similarityfunclen = len(self.thesimfunc)
-        self.similarityfuncorigin = self.similarityfunclen // 2 + 1
-
-        if self.baselinefilter is not None:
-            self.filteredbaseline = self.baselinefilter.apply(self.Fs, self.thesimfunc)
-        else:
-            self.filteredbaseline = self.thesimfunc * 0.0
-
-        # find the global maximum value
-        self.theglobalmax = np.argmax(self.thesimfunc)
-        self.datavalid = True
-
-        if trim:
-            return (
-                self.trim(self.thesimfunc),
-                self.trim(self.timeaxis),
-                self.theglobalmax,
-            )
-        else:
-            return self.thesimfunc, self.timeaxis, self.theglobalmax
 
 
 class Coherer:
@@ -467,15 +510,58 @@ class Coherer:
 
     def __init__(
         self,
-        Fs=0.0,
-        freqmin=None,
-        freqmax=None,
-        ncprefilter=None,
-        reftc=None,
-        detrendorder=1,
-        windowfunc="hamming",
-        debug=False,
-    ):
+        Fs: float = 0.0,
+        freqmin: float | None = None,
+        freqmax: float | None = None,
+        ncprefilter: Any | None = None,
+        reftc: NDArray | None = None,
+        detrendorder: int = 1,
+        windowfunc: str = "hamming",
+        debug: bool = False,
+    ) -> None:
+        """
+        Initialize the Coherer object with configuration parameters.
+
+        Parameters
+        ----------
+        Fs : float, default=0.0
+            Sampling frequency in Hz.
+        freqmin : float, optional
+            Minimum frequency for filtering. If None, no minimum frequency filtering is applied.
+        freqmax : float, optional
+            Maximum frequency for filtering. If None, no maximum frequency filtering is applied.
+        ncprefilter : Any, optional
+            Pre-filtering configuration for non-coherent filtering.
+        reftc : NDArray, optional
+            Reference time course for coherence calculations.
+        detrendorder : int, default=1
+            Order of detrending to apply to the data. 0 for no detrending, 1 for linear detrending.
+        windowfunc : str, default="hamming"
+            Window function to apply during spectral analysis. Options include 'hamming', 'hanning', 'blackman', etc.
+        debug : bool, default=False
+            If True, print initialization debug information.
+
+        Returns
+        -------
+        None
+            This method initializes the object's attributes and performs setup operations.
+
+        Notes
+        -----
+        The initialization process sets up all internal parameters and performs optional
+        debug printing if requested. The freqmin and freqmax parameters are only stored
+        if they are not None. The reftc parameter, if provided, triggers the setreftc method.
+
+        Examples
+        --------
+        >>> coherer = Coherer(Fs=100.0, freqmin=1.0, freqmax=50.0, debug=True)
+        Coherer init:
+            Fs: 100.0
+            windowfunc: hamming
+            detrendorder: 1
+            freqmin: 1.0
+            freqmax: 50.0
+        """
         self.Fs = Fs
         self.ncprefilter = ncprefilter
         self.reftc = reftc
@@ -496,7 +582,37 @@ class Coherer:
             print("\tfreqmin:", self.freqmin)
             print("\tfreqmax:", self.freqmax)
 
-    def preptc(self, thetc):
+    def preptc(self, thetc: NDArray) -> NDArray:
+        """
+        Prepare timecourse by filtering, normalizing, detrending, and applying a window function.
+
+        This function applies a series of preprocessing steps to a timecourse signal including
+        noise filtering, normalization, and detrending to prepare it for further analysis.
+
+        Parameters
+        ----------
+        thetc : ndarray
+            Input timecourse data to be prepared, typically a 1D array of signal values.
+
+        Returns
+        -------
+        ndarray
+            Preprocessed timecourse data after filtering, normalization, and detrending.
+
+        Notes
+        -----
+        The preprocessing pipeline includes:
+        1. Noise filtering using the class's ncprefilter
+        2. Correlation-based normalization
+        3. Detrending with specified order
+
+        Examples
+        --------
+        >>> # Assuming 'obj' is an instance of the class containing this method
+        >>> processed_tc = obj.preptc(timecourse_data)
+        >>> print(processed_tc.shape)
+        (n_timepoints,)
+        """
         # prepare timecourse by filtering, normalizing, detrending, and applying a window function
         return tide_math.corrnormalize(
             self.ncprefilter.apply(self.Fs, thetc),
@@ -504,7 +620,37 @@ class Coherer:
             windowfunc="None",
         )
 
-    def setlimits(self, freqmin, freqmax):
+    def setlimits(self, freqmin: float, freqmax: float) -> None:
+        """
+        Set frequency limits for the object and calculate corresponding indices.
+
+        This method sets the minimum and maximum frequency values and calculates the
+        corresponding indices in the frequency axis if the frequency axis is valid.
+
+        Parameters
+        ----------
+        freqmin : float
+            The minimum frequency value to set.
+        freqmax : float
+            The maximum frequency value to set.
+
+        Returns
+        -------
+        None
+            This method modifies the object's attributes in-place and does not return a value.
+
+        Notes
+        -----
+        If `self.freqaxisvalid` is True, the method calculates `freqmininpts` and `freqmaxinpts`
+        which represent the indices corresponding to the frequency limits in `self.freqaxis`.
+        The calculation ensures that indices stay within valid bounds (0 to len(freqaxis)-1).
+
+        Examples
+        --------
+        >>> obj.setlimits(0.1, 1.0)
+        >>> print(obj.freqmin, obj.freqmax)
+        0.1 1.0
+        """
         self.freqmin = freqmin
         self.freqmax = freqmax
         if self.freqaxisvalid:
@@ -520,7 +666,32 @@ class Coherer:
             print("\tfreqmin,freqmax:", self.freqmin, self.freqmax)
             print("\tfreqmininpts,freqmaxinpts:", self.freqmininpts, self.freqmaxinpts)
 
-    def getaxisinfo(self):
+    def getaxisinfo(self) -> tuple[float, float, float, int]:
+        """
+        Get frequency axis information for the object.
+
+        Returns
+        -------
+        tuple[float, float, float, int]
+            A tuple containing:
+            - Minimum frequency value (float)
+            - Maximum frequency value (float)
+            - Frequency step size (float)
+            - Number of frequency points (int)
+
+        Notes
+        -----
+        This method extracts key frequency axis parameters from the object's frequency array.
+        The frequency axis is assumed to be linearly spaced, and the returned values represent
+        the range and spacing of the frequency data.
+
+        Examples
+        --------
+        >>> info = obj.getaxisinfo()
+        >>> print(f"Frequency range: {info[0]} to {info[1]} Hz")
+        >>> print(f"Frequency step: {info[2]} Hz")
+        >>> print(f"Number of points: {info[3]}")
+        """
         return (
             self.freqaxis[self.freqmininpts],
             self.freqaxis[self.freqmaxinpts],
@@ -528,7 +699,43 @@ class Coherer:
             self.freqmaxinpts - self.freqmininpts,
         )
 
-    def setreftc(self, reftc):
+    def setreftc(self, reftc: NDArray) -> None:
+        """
+        Set reference time series and compute coherence statistics.
+
+        This method assigns the reference time series, processes it through the preprocessing
+        pipeline, and computes coherence statistics between the reference signal and itself.
+        The method also sets up frequency axis parameters and validates the data.
+
+        Parameters
+        ----------
+        reftc : NDArray
+            Reference time series data to be processed. The array will be copied and converted
+            to float type to ensure proper numerical operations.
+
+        Returns
+        -------
+        None
+            This method modifies the instance attributes in-place and does not return any value.
+
+        Notes
+        -----
+        The method performs the following operations:
+        1. Assigns the input array to `self.reftc` with explicit float conversion
+        2. Preprocesses the reference time series using `self.preptc()` method
+        3. Computes coherence between the preprocessed reference signal and itself
+        4. Sets up frequency axis and coherence data attributes
+        5. Validates frequency limits and converts them to array indices
+        6. Updates data validity flags
+
+        Examples
+        --------
+        >>> # Assuming 'obj' is an instance of the class containing this method
+        >>> reference_data = np.array([1.0, 2.0, 3.0, 4.0])
+        >>> obj.setreftc(reference_data)
+        >>> print(obj.freqaxis)
+        >>> print(obj.thecoherence)
+        """
         self.reftc = reftc + 0.0
         self.prepreftc = self.preptc(self.reftc)
 
@@ -550,13 +757,39 @@ class Coherer:
             self.freqaxis, self.freqmax, discretization="ceiling", debug=self.debug
         )
 
-    def trim(self, vector):
+    def trim(self, vector: NDArray) -> NDArray:
         return vector[self.freqmininpts : self.freqmaxinpts]
 
-    def run(self, thetc, trim=True, alt=False):
+    def run(
+        self, thetc: NDArray, trim: bool = True, alt: bool = False
+    ) -> tuple[NDArray, NDArray, int] | tuple[NDArray, NDArray, int, NDArray, NDArray, NDArray]:
+        """
+        Trim vector to specified frequency range indices.
+
+        Parameters
+        ----------
+        vector : NDArray
+            Input vector to be trimmed.
+
+        Returns
+        -------
+        NDArray
+            Trimmed vector containing elements from `self.freqmininpts` to `self.freqmaxinpts`.
+
+        Notes
+        -----
+        This function uses array slicing to extract a portion of the input vector based on
+        the frequency range boundaries defined by `self.freqmininpts` and `self.freqmaxinpts`.
+
+        Examples
+        --------
+        >>> trimmed_data = obj.trim(data_vector)
+        >>> print(trimmed_data.shape)
+        (freqmaxinpts - freqmininpts,)
+        """
         if len(thetc) != len(self.reftc):
             print(
-                "timecourses are of different sizes:",
+                "Coherer: timecourses are of different sizes:",
                 len(thetc),
                 "!=",
                 len(self.reftc),
@@ -608,6 +841,10 @@ class Coherer:
         self.datavalid = True
 
         if trim:
+            if self.freqmaxinpts <= self.freqmininpts:
+                raise ValueError(
+                    f"invalid coherence trim range: [{self.freqmininpts}, {self.freqmaxinpts})"
+                )
             if alt:
                 self.themax = np.argmax(self.thecoherence[self.freqmininpts : self.freqmaxinpts])
                 return (
@@ -640,757 +877,3 @@ class Coherer:
             else:
                 self.themax = np.argmax(self.thecoherence)
                 return self.thecoherence, self.freqaxis, self.themax
-
-
-class SimilarityFunctionFitter:
-    corrtimeaxis = None
-    FML_NOERROR = np.uint32(0x0000)
-
-    FML_INITAMPLOW = np.uint32(0x0001)
-    FML_INITAMPHIGH = np.uint32(0x0002)
-    FML_INITWIDTHLOW = np.uint32(0x0004)
-    FML_INITWIDTHHIGH = np.uint32(0x0008)
-    FML_INITLAGLOW = np.uint32(0x0010)
-    FML_INITLAGHIGH = np.uint32(0x0020)
-    FML_INITFAIL = (
-        FML_INITAMPLOW
-        | FML_INITAMPHIGH
-        | FML_INITWIDTHLOW
-        | FML_INITWIDTHHIGH
-        | FML_INITLAGLOW
-        | FML_INITLAGHIGH
-    )
-
-    FML_FITAMPLOW = np.uint32(0x0100)
-    FML_FITAMPHIGH = np.uint32(0x0200)
-    FML_FITWIDTHLOW = np.uint32(0x0400)
-    FML_FITWIDTHHIGH = np.uint32(0x0800)
-    FML_FITLAGLOW = np.uint32(0x1000)
-    FML_FITLAGHIGH = np.uint32(0x2000)
-    FML_FITFAIL = (
-        FML_FITAMPLOW
-        | FML_FITAMPHIGH
-        | FML_FITWIDTHLOW
-        | FML_FITWIDTHHIGH
-        | FML_FITLAGLOW
-        | FML_FITLAGHIGH
-    )
-
-    def __init__(
-        self,
-        corrtimeaxis=None,
-        lagmin=-30.0,
-        lagmax=30.0,
-        absmaxsigma=1000.0,
-        absminsigma=0.25,
-        hardlimit=True,
-        bipolar=False,
-        lthreshval=0.0,
-        uthreshval=1.0,
-        debug=False,
-        zerooutbadfit=True,
-        maxguess=0.0,
-        useguess=False,
-        searchfrac=0.5,
-        lagmod=1000.0,
-        enforcethresh=True,
-        allowhighfitamps=False,
-        displayplots=False,
-        functype="correlation",
-        peakfittype="gauss",
-    ):
-        r"""
-
-        Parameters
-        ----------
-        corrtimeaxis:  1D float array
-            The time axis of the correlation function
-        lagmin: float
-            The minimum allowed lag time in seconds
-        lagmax: float
-            The maximum allowed lag time in seconds
-        absmaxsigma: float
-            The maximum allowed peak halfwidth in seconds
-        hardlimit
-        bipolar: boolean
-            If true find the correlation peak with the maximum absolute value, regardless of sign
-        threshval
-        uthreshval
-        debug
-        zerooutbadfit
-        maxguess
-        useguess
-        searchfrac
-        lagmod
-        enforcethresh
-        displayplots
-
-        Returns
-        -------
-
-
-        Methods
-        -------
-        fit(corrfunc):
-            Fit the correlation function given in corrfunc and return the location of the peak in seconds, the maximum
-            correlation value, the peak width
-        setrange(lagmin, lagmax):
-            Specify the search range for lag peaks, in seconds
-        """
-        self.setcorrtimeaxis(corrtimeaxis)
-        self.lagmin = lagmin
-        self.lagmax = lagmax
-        self.absmaxsigma = absmaxsigma
-        self.absminsigma = absminsigma
-        self.hardlimit = hardlimit
-        self.bipolar = bipolar
-        self.lthreshval = lthreshval
-        self.uthreshval = uthreshval
-        self.debug = debug
-        if functype == "correlation" or functype == "mutualinfo":
-            self.functype = functype
-        else:
-            print("illegal functype")
-            sys.exit()
-        self.peakfittype = peakfittype
-        self.zerooutbadfit = zerooutbadfit
-        self.maxguess = maxguess
-        self.useguess = useguess
-        self.searchfrac = searchfrac
-        self.lagmod = lagmod
-        self.enforcethresh = enforcethresh
-        self.allowhighfitamps = allowhighfitamps
-        self.displayplots = displayplots
-
-    def _maxindex_noedge(self, corrfunc):
-        """
-
-        Parameters
-        ----------
-        corrfunc
-
-        Returns
-        -------
-
-        """
-        lowerlim = 0
-        upperlim = len(self.corrtimeaxis) - 1
-        done = False
-        while not done:
-            flipfac = 1.0
-            done = True
-            maxindex = (np.argmax(corrfunc[lowerlim:upperlim]) + lowerlim).astype("int32")
-            if self.bipolar:
-                minindex = (np.argmax(-corrfunc[lowerlim:upperlim]) + lowerlim).astype("int32")
-                if np.fabs(corrfunc[minindex]) > np.fabs(corrfunc[maxindex]):
-                    maxindex = minindex
-                    flipfac = -1.0
-            if upperlim == lowerlim:
-                done = True
-            if maxindex == 0:
-                lowerlim += 1
-                done = False
-            if maxindex == upperlim:
-                upperlim -= 1
-                done = False
-        return maxindex, flipfac
-
-    def setfunctype(self, functype):
-        self.functype = functype
-
-    def setpeakfittype(self, peakfittype):
-        self.peakfittype = peakfittype
-
-    def setrange(self, lagmin, lagmax):
-        self.lagmin = lagmin
-        self.lagmax = lagmax
-
-    def setcorrtimeaxis(self, corrtimeaxis):
-        if corrtimeaxis is not None:
-            self.corrtimeaxis = corrtimeaxis + 0.0
-        else:
-            self.corrtimeaxis = corrtimeaxis
-
-    def setguess(self, useguess, maxguess=0.0):
-        self.useguess = useguess
-        self.maxguess = maxguess
-
-    def setlthresh(self, lthreshval):
-        self.lthreshval = lthreshval
-
-    def setuthresh(self, uthreshval):
-        self.uthreshval = uthreshval
-
-    def diagnosefail(self, failreason):
-        # define error values
-        reasons = []
-        if failreason.astype(np.uint32) & self.FML_INITAMPLOW:
-            reasons.append("Initial amplitude too low")
-        if failreason.astype(np.uint32) & self.FML_INITAMPHIGH:
-            reasons.append("Initial amplitude too high")
-        if failreason.astype(np.uint32) & self.FML_INITWIDTHLOW:
-            reasons.append("Initial width too low")
-        if failreason.astype(np.uint32) & self.FML_INITWIDTHHIGH:
-            reasons.append("Initial width too high")
-        if failreason.astype(np.uint32) & self.FML_INITLAGLOW:
-            reasons.append("Initial Lag too low")
-        if failreason.astype(np.uint32) & self.FML_INITLAGHIGH:
-            reasons.append("Initial Lag too high")
-
-        if failreason.astype(np.uint32) & self.FML_FITAMPLOW:
-            reasons.append("Fit amplitude too low")
-        if failreason.astype(np.uint32) & self.FML_FITAMPHIGH:
-            reasons.append("Fit amplitude too high")
-        if failreason.astype(np.uint32) & self.FML_FITWIDTHLOW:
-            reasons.append("Fit width too low")
-        if failreason.astype(np.uint32) & self.FML_FITWIDTHHIGH:
-            reasons.append("Fit width too high")
-        if failreason.astype(np.uint32) & self.FML_FITLAGLOW:
-            reasons.append("Fit Lag too low")
-        if failreason.astype(np.uint32) & self.FML_FITLAGHIGH:
-            reasons.append("Fit Lag too high")
-
-        if len(reasons) > 0:
-            return ", ".join(reasons)
-        else:
-            return "No error"
-
-    def fit(self, incorrfunc):
-        # check to make sure xcorr_x and xcorr_y match
-        if self.corrtimeaxis is None:
-            print("Correlation time axis is not defined - exiting")
-            sys.exit()
-        if len(self.corrtimeaxis) != len(incorrfunc):
-            print(
-                "Correlation time axis and values do not match in length (",
-                len(self.corrtimeaxis),
-                "!=",
-                len(incorrfunc),
-                "- exiting",
-            )
-            sys.exit()
-        # set initial parameters
-        # absmaxsigma is in seconds
-        # maxsigma is in Hz
-        # maxlag is in seconds
-        warnings.filterwarnings("ignore", "Number*")
-        failreason = self.FML_NOERROR
-        maskval = np.uint16(1)  # start out assuming the fit will succeed
-        binwidth = self.corrtimeaxis[1] - self.corrtimeaxis[0]
-
-        # set the search range
-        lowerlim = 0
-        upperlim = len(self.corrtimeaxis) - 1
-        if self.debug:
-            print(
-                "initial search indices are",
-                lowerlim,
-                "to",
-                upperlim,
-                "(",
-                self.corrtimeaxis[lowerlim],
-                self.corrtimeaxis[upperlim],
-                ")",
-            )
-
-        # make an initial guess at the fit parameters for the gaussian
-        # start with finding the maximum value and its location
-        flipfac = 1.0
-        corrfunc = incorrfunc + 0.0
-        if self.useguess:
-            maxindex = tide_util.valtoindex(self.corrtimeaxis, self.maxguess)
-            if (corrfunc[maxindex] < 0.0) and self.bipolar:
-                flipfac = -1.0
-        else:
-            maxindex, flipfac = self._maxindex_noedge(corrfunc)
-        corrfunc *= flipfac
-        maxlag_init = (1.0 * self.corrtimeaxis[maxindex]).astype("float64")
-        maxval_init = corrfunc[maxindex].astype("float64")
-        if self.debug:
-            print(
-                "maxindex, maxlag_init, maxval_init:",
-                maxindex,
-                maxlag_init,
-                maxval_init,
-            )
-
-        # set the baseline and baselinedev levels
-        if (self.functype == "correlation") or (self.functype == "hybrid"):
-            baseline = 0.0
-            baselinedev = 0.0
-        else:
-            # for mutual information, there is a nonzero baseline, so we want the difference from that.
-            baseline = np.median(corrfunc)
-            baselinedev = mad(corrfunc)
-        if self.debug:
-            print("baseline, baselinedev:", baseline, baselinedev)
-
-        # then calculate the width of the peak
-        if self.peakfittype == "fastquad" or self.peakfittype == "COM":
-            peakstart = np.max([1, maxindex - 2])
-            peakend = np.min([len(self.corrtimeaxis) - 2, maxindex + 2])
-        else:
-            # come here for peakfittype of None, quad, gauss, fastgauss
-            thegrad = np.gradient(corrfunc).astype(
-                "float64"
-            )  # the gradient of the correlation function
-            if (self.functype == "correlation") or (self.functype == "hybrid"):
-                if self.peakfittype == "quad":
-                    peakpoints = np.where(
-                        corrfunc > maxval_init - 0.05, 1, 0
-                    )  # mask for places where correlation exceeds searchfrac*maxval_init
-                else:
-                    peakpoints = np.where(
-                        corrfunc > (baseline + self.searchfrac * (maxval_init - baseline)), 1, 0
-                    )  # mask for places where correlation exceeds searchfrac*maxval_init
-            else:
-                # for mutual information, there is a flattish, nonzero baseline, so we want the difference from that.
-                peakpoints = np.where(
-                    corrfunc > (baseline + self.searchfrac * (maxval_init - baseline)),
-                    1,
-                    0,
-                )
-
-            peakpoints[0] = 0
-            peakpoints[-1] = 0
-            peakstart = np.max([1, maxindex - 1])
-            peakend = np.min([len(self.corrtimeaxis) - 2, maxindex + 1])
-            if self.debug:
-                print("initial peakstart, peakend:", peakstart, peakend)
-            if self.functype == "mutualinfo":
-                while peakpoints[peakend + 1] == 1:
-                    peakend += 1
-                while peakpoints[peakstart - 1] == 1:
-                    peakstart -= 1
-            else:
-                while thegrad[peakend + 1] <= 0.0 and peakpoints[peakend + 1] == 1:
-                    peakend += 1
-                while thegrad[peakstart - 1] >= 0.0 and peakpoints[peakstart - 1] == 1:
-                    peakstart -= 1
-            if self.debug:
-                print("final peakstart, peakend:", peakstart, peakend)
-
-            # deal with flat peak top
-            while (
-                peakend < (len(self.corrtimeaxis) - 3)
-                and corrfunc[peakend] == corrfunc[peakend - 1]
-            ):
-                peakend += 1
-            while peakstart > 2 and corrfunc[peakstart] == corrfunc[peakstart + 1]:
-                peakstart -= 1
-            if self.debug:
-                print("peakstart, peakend after flattop correction:", peakstart, peakend)
-                print("\n")
-                for i in range(peakstart, peakend + 1):
-                    print(self.corrtimeaxis[i], corrfunc[i])
-                print("\n")
-                fig = plt.figure()
-                ax = fig.add_subplot(111)
-                ax.set_title("Peak sent to fitting routine")
-                plt.plot(
-                    self.corrtimeaxis[peakstart : peakend + 1],
-                    corrfunc[peakstart : peakend + 1],
-                    "r",
-                )
-                plt.show()
-
-            # This is calculated from first principles, but it's always big by a factor or ~1.4.
-            #     Which makes me think I dropped a factor if sqrt(2).  So fix that with a final division
-            maxsigma_init = np.float64(
-                ((peakend - peakstart + 1) * binwidth / (2.0 * np.sqrt(-np.log(self.searchfrac))))
-                / np.sqrt(2.0)
-            )
-            if self.debug:
-                print("maxsigma_init:", maxsigma_init)
-
-            # now check the values for errors
-            if self.hardlimit:
-                rangeextension = 0.0
-            else:
-                rangeextension = (self.lagmax - self.lagmin) * 0.75
-            if not (
-                (self.lagmin - rangeextension - binwidth)
-                <= maxlag_init
-                <= (self.lagmax + rangeextension + binwidth)
-            ):
-                if maxlag_init <= (self.lagmin - rangeextension - binwidth):
-                    failreason |= self.FML_INITLAGLOW
-                    maxlag_init = self.lagmin - rangeextension - binwidth
-                else:
-                    failreason |= self.FML_INITLAGHIGH
-                    maxlag_init = self.lagmax + rangeextension + binwidth
-                if self.debug:
-                    print("bad initial")
-            if maxsigma_init > self.absmaxsigma:
-                failreason |= self.FML_INITWIDTHHIGH
-                maxsigma_init = self.absmaxsigma
-                if self.debug:
-                    print("bad initial width - too high")
-            if peakend - peakstart < 2:
-                failreason |= self.FML_INITWIDTHLOW
-                maxsigma_init = np.float64(
-                    ((2 + 1) * binwidth / (2.0 * np.sqrt(-np.log(self.searchfrac)))) / np.sqrt(2.0)
-                )
-                if self.debug:
-                    print("bad initial width - too low")
-            if (self.functype == "correlation") or (self.functype == "hybrid"):
-                if not (self.lthreshval <= maxval_init <= self.uthreshval) and self.enforcethresh:
-                    failreason |= self.FML_INITAMPLOW
-                    if self.debug:
-                        print(
-                            "bad initial amp:",
-                            maxval_init,
-                            "is less than",
-                            self.lthreshval,
-                        )
-                if maxval_init < 0.0:
-                    failreason |= self.FML_INITAMPLOW
-                    maxval_init = 0.0
-                    if self.debug:
-                        print("bad initial amp:", maxval_init, "is less than 0.0")
-                if maxval_init > 1.0:
-                    failreason |= self.FML_INITAMPHIGH
-                    maxval_init = 1.0
-                    if self.debug:
-                        print("bad initial amp:", maxval_init, "is greater than 1.0")
-            else:
-                # somewhat different rules for mutual information peaks
-                if ((maxval_init - baseline) < self.lthreshval * baselinedev) or (
-                    maxval_init < baseline
-                ):
-                    failreason |= self.FML_INITAMPLOW
-                    maxval_init = 0.0
-                    if self.debug:
-                        print("bad initial amp:", maxval_init, "is less than 0.0")
-            if (failreason != self.FML_NOERROR) and self.zerooutbadfit:
-                maxval = np.float64(0.0)
-                maxlag = np.float64(0.0)
-                maxsigma = np.float64(0.0)
-            else:
-                maxval = np.float64(maxval_init)
-                maxlag = np.float64(maxlag_init)
-                maxsigma = np.float64(maxsigma_init)
-
-        # refine if necessary
-        if self.peakfittype != "None":
-            if self.peakfittype == "COM":
-                X = self.corrtimeaxis[peakstart : peakend + 1] - baseline
-                data = corrfunc[peakstart : peakend + 1]
-                maxval = maxval_init
-                maxlag = np.sum(X * data) / np.sum(data)
-                maxsigma = 10.0
-            elif self.peakfittype == "gauss":
-                X = self.corrtimeaxis[peakstart : peakend + 1] - baseline
-                data = corrfunc[peakstart : peakend + 1]
-                # do a least squares fit over the top of the peak
-                # p0 = np.array([maxval_init, np.fmod(maxlag_init, lagmod), maxsigma_init], dtype='float64')
-                p0 = np.array([maxval_init, maxlag_init, maxsigma_init], dtype="float64")
-                if self.debug:
-                    print("fit input array:", p0)
-                try:
-                    plsq, dummy = sp.optimize.leastsq(
-                        tide_fit.gaussresiduals, p0, args=(data, X), maxfev=5000
-                    )
-                    maxval = plsq[0] + baseline
-                    maxlag = np.fmod((1.0 * plsq[1]), self.lagmod)
-                    maxsigma = plsq[2]
-                except:
-                    maxval = np.float64(0.0)
-                    maxlag = np.float64(0.0)
-                    maxsigma = np.float64(0.0)
-                if self.debug:
-                    print("fit output array:", [maxval, maxlag, maxsigma])
-            elif self.peakfittype == "gausscf":
-                X = self.corrtimeaxis[peakstart : peakend + 1] - baseline
-                data = corrfunc[peakstart : peakend + 1]
-                # do a least squares fit over the top of the peak
-                try:
-                    plsq, pcov = curve_fit(
-                        tide_fit.gaussfunc,
-                        X,
-                        data,
-                        p0=[maxval_init, maxlag_init, maxsigma_init],
-                    )
-                    maxval = plsq[0] + baseline
-                    maxlag = np.fmod((1.0 * plsq[1]), self.lagmod)
-                    maxsigma = plsq[2]
-                except:
-                    maxval = np.float64(0.0)
-                    maxlag = np.float64(0.0)
-                    maxsigma = np.float64(0.0)
-                if self.debug:
-                    print("fit output array:", [maxval, maxlag, maxsigma])
-            elif self.peakfittype == "fastgauss":
-                X = self.corrtimeaxis[peakstart : peakend + 1] - baseline
-                data = corrfunc[peakstart : peakend + 1]
-                # do a non-iterative fit over the top of the peak
-                # 6/12/2015  This is just broken.  Gives quantized maxima
-                maxlag = np.float64(1.0 * np.sum(X * data) / np.sum(data))
-                maxsigma = np.float64(
-                    np.sqrt(np.abs(np.sum((X - maxlag) ** 2 * data) / np.sum(data)))
-                )
-                maxval = np.float64(data.max()) + baseline
-            elif self.peakfittype == "fastquad":
-                maxlag, maxval, maxsigma, ismax, badfit = tide_fit.refinepeak_quad(
-                    self.corrtimeaxis, corrfunc, maxindex
-                )
-            elif self.peakfittype == "quad":
-                X = self.corrtimeaxis[peakstart : peakend + 1]
-                data = corrfunc[peakstart : peakend + 1]
-                try:
-                    thecoffs = Polynomial.fit(X, data, 2).convert().coef[::-1]
-                    a = thecoffs[0]
-                    b = thecoffs[1]
-                    c = thecoffs[2]
-                    maxlag = -b / (2.0 * a)
-                    maxval = a * maxlag * maxlag + b * maxlag + c
-                    maxsigma = 1.0 / np.fabs(a)
-                    if self.debug:
-                        print("poly coffs:", a, b, c)
-                        print("maxlag, maxval, maxsigma:", maxlag, maxval, maxsigma)
-                except np.lib.polynomial.RankWarning:
-                    maxlag = 0.0
-                    maxval = 0.0
-                    maxsigma = 0.0
-                if self.debug:
-                    print("\n")
-                    for i in range(len(X)):
-                        print(X[i], data[i])
-                    print("\n")
-                    fig = plt.figure()
-                    ax = fig.add_subplot(111)
-                    ax.set_title("Peak and fit")
-                    plt.plot(X, data, "r")
-                    plt.plot(X, c + b * X + a * X * X, "b")
-                    plt.show()
-
-            else:
-                print("illegal peak refinement type")
-
-            # check for errors in fit
-            fitfail = False
-            if self.bipolar:
-                lowestcorrcoeff = -1.0
-            else:
-                lowestcorrcoeff = 0.0
-            if (self.functype == "correlation") or (self.functype == "hybrid"):
-                if maxval < lowestcorrcoeff:
-                    failreason |= self.FML_FITAMPLOW
-                    maxval = lowestcorrcoeff
-                    if self.debug:
-                        print("bad fit amp: maxval is lower than lower limit")
-                    fitfail = True
-                if np.abs(maxval) > 1.0:
-                    if not self.allowhighfitamps:
-                        failreason |= self.FML_FITAMPHIGH
-                        if self.debug:
-                            print(
-                                "bad fit amp: magnitude of",
-                                maxval,
-                                "is greater than 1.0",
-                            )
-                        fitfail = True
-                    maxval = 1.0 * np.sign(maxval)
-            else:
-                # different rules for mutual information peaks
-                if ((maxval - baseline) < self.lthreshval * baselinedev) or (maxval < baseline):
-                    failreason |= self.FML_FITAMPLOW
-                    if self.debug:
-                        if (maxval - baseline) < self.lthreshval * baselinedev:
-                            print(
-                                "FITAMPLOW: maxval - baseline:",
-                                maxval - baseline,
-                                " < lthreshval * baselinedev:",
-                                self.lthreshval * baselinedev,
-                            )
-                        if maxval < baseline:
-                            print("FITAMPLOW: maxval < baseline:", maxval, baseline)
-                    maxval_init = 0.0
-                    if self.debug:
-                        print("bad fit amp: maxval is lower than lower limit")
-            if (self.lagmin > maxlag) or (maxlag > self.lagmax):
-                if self.debug:
-                    print("bad lag after refinement")
-                if self.lagmin > maxlag:
-                    failreason |= self.FML_FITLAGLOW
-                    maxlag = self.lagmin
-                else:
-                    failreason |= self.FML_FITLAGHIGH
-                    maxlag = self.lagmax
-                fitfail = True
-            if maxsigma > self.absmaxsigma:
-                failreason |= self.FML_FITWIDTHHIGH
-                if self.debug:
-                    print("bad width after refinement:", maxsigma, ">", self.absmaxsigma)
-                maxsigma = self.absmaxsigma
-                fitfail = True
-            if maxsigma < self.absminsigma:
-                failreason |= self.FML_FITWIDTHLOW
-                if self.debug:
-                    print("bad width after refinement:", maxsigma, "<", self.absminsigma)
-                maxsigma = self.absminsigma
-                fitfail = True
-            if fitfail:
-                if self.debug:
-                    print("fit fail")
-                if self.zerooutbadfit:
-                    maxval = np.float64(0.0)
-                    maxlag = np.float64(0.0)
-                    maxsigma = np.float64(0.0)
-                maskval = np.uint16(0)
-            # print(maxlag_init, maxlag, maxval_init, maxval, maxsigma_init, maxsigma, maskval, failreason, fitfail)
-        else:
-            maxval = np.float64(maxval_init)
-            maxlag = np.float64(np.fmod(maxlag_init, self.lagmod))
-            maxsigma = np.float64(maxsigma_init)
-            if failreason != self.FML_NOERROR:
-                maskval = np.uint16(0)
-
-        if self.debug or self.displayplots:
-            print(
-                "init to final: maxval",
-                maxval_init,
-                maxval,
-                ", maxlag:",
-                maxlag_init,
-                maxlag,
-                ", width:",
-                maxsigma_init,
-                maxsigma,
-            )
-        if self.displayplots and (self.peakfittype != "None") and (maskval != 0.0):
-            fig = plt.figure()
-            ax = fig.add_subplot(111)
-            ax.set_title("Data and fit")
-            hiresx = np.arange(X[0], X[-1], (X[1] - X[0]) / 10.0)
-            plt.plot(
-                X,
-                data,
-                "ro",
-                hiresx,
-                tide_fit.gauss_eval(hiresx, np.array([maxval, maxlag, maxsigma])),
-                "b-",
-            )
-            plt.show()
-        return (
-            maxindex,
-            maxlag,
-            flipfac * maxval,
-            maxsigma,
-            maskval,
-            failreason,
-            peakstart,
-            peakend,
-        )
-
-
-class FrequencyTracker:
-    freqs = None
-    times = None
-
-    def __init__(self, lowerlim=0.1, upperlim=0.6, nperseg=32, Q=10.0, debug=False):
-        self.lowerlim = lowerlim
-        self.upperlim = upperlim
-        self.nperseg = nperseg
-        self.Q = Q
-        self.debug = debug
-        self.nfft = self.nperseg
-
-    def track(self, x, fs):
-        self.freqs, self.times, thespectrogram = sp.signal.spectrogram(
-            np.concatenate(
-                [np.zeros(int(self.nperseg // 2)), x, np.zeros(int(self.nperseg // 2))],
-                axis=0,
-            ),
-            fs=fs,
-            detrend="constant",
-            scaling="spectrum",
-            nfft=None,
-            window=np.hamming(self.nfft),
-            noverlap=(self.nperseg - 1),
-        )
-        lowerliminpts = tide_util.valtoindex(self.freqs, self.lowerlim)
-        upperliminpts = tide_util.valtoindex(self.freqs, self.upperlim)
-
-        if self.debug:
-            print(self.times.shape, self.freqs.shape, thespectrogram.shape)
-            print(self.times)
-
-        # intitialize the peak fitter
-        thefitter = SimilarityFunctionFitter(
-            corrtimeaxis=self.freqs,
-            lagmin=self.lowerlim,
-            lagmax=self.upperlim,
-            absmaxsigma=10.0,
-            absminsigma=0.1,
-            debug=self.debug,
-            peakfittype="fastquad",
-            zerooutbadfit=False,
-            useguess=False,
-        )
-
-        peakfreqs = np.zeros((thespectrogram.shape[1] - 1), dtype=float)
-        for i in range(0, thespectrogram.shape[1] - 1):
-            (
-                maxindex,
-                peakfreqs[i],
-                maxval,
-                maxsigma,
-                maskval,
-                failreason,
-                peakstart,
-                peakend,
-            ) = thefitter.fit(thespectrogram[:, i])
-            if not (lowerliminpts <= maxindex <= upperliminpts):
-                peakfreqs[i] = -1.0
-
-        return self.times[:-1], peakfreqs
-
-    def clean(self, x, fs, times, peakfreqs, numharmonics=2):
-        nyquistfreq = 0.5 * fs
-        y = x * 0.0
-        halfwidth = int(self.nperseg // 2)
-        padx = np.concatenate([np.zeros(halfwidth), x, np.zeros(halfwidth)], axis=0)
-        pady = np.concatenate([np.zeros(halfwidth), y, np.zeros(halfwidth)], axis=0)
-        padweight = padx * 0.0
-        if self.debug:
-            print(fs, len(times), len(peakfreqs))
-        for i in range(0, len(times)):
-            centerindex = int(times[i] * fs)
-            xstart = centerindex - halfwidth
-            xend = centerindex + halfwidth
-            if peakfreqs[i] > 0.0:
-                filtsignal = padx[xstart:xend]
-                numharmonics = np.min([numharmonics, int((nyquistfreq // peakfreqs[i]) - 1)])
-                if self.debug:
-                    print("numharmonics:", numharmonics, nyquistfreq // peakfreqs[i])
-                for j in range(numharmonics + 1):
-                    workingfreq = (j + 1) * peakfreqs[i]
-                    if self.debug:
-                        print("workingfreq:", workingfreq)
-                    ws = [workingfreq * 0.95, workingfreq * 1.05]
-                    wp = [workingfreq * 0.9, workingfreq * 1.1]
-                    gpass = 1.0
-                    gstop = 40.0
-                    b, a = sp.signal.iirdesign(wp, ws, gpass, gstop, ftype="cheby2", fs=fs)
-                    if self.debug:
-                        print(
-                            i,
-                            j,
-                            times[i],
-                            centerindex,
-                            halfwidth,
-                            xstart,
-                            xend,
-                            xend - xstart,
-                            wp,
-                            ws,
-                            len(a),
-                            len(b),
-                        )
-                    filtsignal = sp.signal.filtfilt(b, a, sp.signal.filtfilt(b, a, filtsignal))
-                pady[xstart:xend] += filtsignal
-            else:
-                pady[xstart:xend] += padx[xstart:xend]
-            padweight[xstart:xend] += 1.0
-        return (pady / padweight)[halfwidth:-halfwidth]

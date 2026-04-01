@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -18,20 +18,46 @@
 #
 import argparse
 import sys
+from typing import Any
 
 import numpy as np
 from scipy.stats import pearsonr
 
 import rapidtide.correlate as tide_corr
-import rapidtide.helper_classes as tide_classes
 import rapidtide.io as tide_io
 import rapidtide.miscmath as tide_math
+import rapidtide.simFuncClasses as tide_simFuncClasses
 import rapidtide.workflows.parser_funcs as pf
 
 
-def _get_parser():
+def _get_parser() -> Any:
     """
-    Argument parser for showarbcorr
+    Argument parser for showarbcorr.
+
+    This function constructs and returns an `argparse.ArgumentParser` object configured
+    for the `showarbcorr` command-line tool. It defines required and optional arguments
+    for calculating and displaying crosscorrelation between two time series, supporting
+    variable lengths and sampling frequencies.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser for `showarbcorr`.
+
+    Notes
+    -----
+    The parser includes groups for:
+    - Required input files
+    - Optional arguments (e.g., sample rates, display control)
+    - Preprocessing options (e.g., detrending, correlation weighting)
+    - Filtering and windowing options
+    - Output configuration (e.g., files for results, plots)
+    - Miscellaneous settings (e.g., multiprocessing, progress bar)
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args()
     """
     parser = argparse.ArgumentParser(
         prog="showarbcorr",
@@ -240,13 +266,128 @@ def _get_parser():
     return parser
 
 
-def printthresholds(pcts, thepercentiles, labeltext):
+def printthresholds(pcts: Any, thepercentiles: Any, labeltext: Any) -> None:
+    """
+    Print thresholds with corresponding percentile labels.
+
+    This function prints a formatted list of thresholds along with their
+    corresponding percentile labels for statistical analysis output.
+
+    Parameters
+    ----------
+    pcts : Any
+        Array or list of threshold values to be printed.
+    thepercentiles : Any
+        Array or list of percentile values corresponding to the thresholds.
+    labeltext : Any
+        Text label to be printed before the threshold list.
+
+    Returns
+    -------
+    None
+        This function prints to standard output and does not return any value.
+
+    Notes
+    -----
+    The function formats the percentile values as "1.0 - thepercentiles[i]"
+    to show the alpha level (significance threshold) for each percentile.
+
+    Examples
+    --------
+    >>> pcts = [0.05, 0.01, 0.001]
+    >>> thepercentiles = [0.95, 0.99, 0.999]
+    >>> labeltext = "Critical Values:"
+    >>> printthresholds(pcts, thepercentiles, labeltext)
+    Critical Values:
+        p < 0.050 : 0.05
+        p < 0.010 : 0.01
+        p < 0.001 : 0.001
+    """
     print(labeltext)
     for i in range(0, len(pcts)):
         print("\tp <", "{:.3f}".format(1.0 - thepercentiles[i]), ": ", pcts[i])
 
 
-def showarbcorr(args):
+def showarbcorr(args: Any) -> None:
+    """
+    Compute and display cross-correlation between two time series with optional filtering and plotting.
+
+    This function reads two time series from text files, matches their sampling rates, applies
+    optional filtering, and computes the cross-correlation. It supports various options for
+    data trimming, inversion, and output formatting, including optional visualization and
+    correlation fitting.
+
+    Parameters
+    ----------
+    args : Any
+        An object containing command-line arguments and configuration options. Expected
+        attributes include:
+        - infilename1, infilename2 : str
+            Paths to input text files containing the two time series.
+        - samplerate1, samplerate2 : float, optional
+            Sampling rates for the two time series. If not provided, they are inferred
+            from the input files.
+        - start1, start2 : float, optional
+            Start times for the two time series.
+        - trimdata : bool
+            If True, trim the data to the shorter of the two time series.
+        - invert : bool
+            If True, invert the second time series before correlation.
+        - windowfunc : str, optional
+            Window function to apply during correlation normalization.
+        - detrendorder : int, optional
+            Order of detrending to apply before correlation.
+        - display : bool
+            If True, display the cross-correlation plot.
+        - graphfile : str, optional
+            Output filename for saving the plot.
+        - label : str, optional
+            Label to use in output.
+        - lagmin, lagmax : float
+            Minimum and maximum lags (in seconds) to consider in the correlation.
+        - debug : bool
+            If True, enable debug output.
+        - bipolar : bool
+            If True, fit the peak using bipolar symmetry.
+        - summarymode : bool
+            If True, output results in a tab-separated summary format.
+        - outputfile : str, optional
+            File to write summary output.
+        - corroutputfile : str, optional
+            File to write full cross-correlation data.
+        - verbose : bool
+            If True, print verbose messages.
+
+    Returns
+    -------
+    None
+        This function does not return a value but may produce plots, print outputs,
+        and write files depending on the provided arguments.
+
+    Notes
+    -----
+    - The function uses `tide_io.readvectorsfromtextfile` to read input data.
+    - Filtering is applied via `tide_math.corrnormalize` and `theprefilter.apply`.
+    - Cross-correlation is computed using `tide_corr.arbcorr`.
+    - A peak-fitting procedure is used to refine the maximum correlation lag.
+    - If `summarymode` is True, output is written in tab-separated format to stdout or a file.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     infilename1="data1.txt",
+    ...     infilename2="data2.txt",
+    ...     samplerate1=10.0,
+    ...     samplerate2=10.0,
+    ...     display=True,
+    ...     lagmin=-5.0,
+    ...     lagmax=5.0,
+    ...     windowfunc="hanning",
+    ...     debug=False
+    ... )
+    >>> showarbcorr(args)
+    """
     # set some default values
     absmaxsigma = 1000.0
     absminsigma = 0.25
@@ -297,6 +438,8 @@ def showarbcorr(args):
         sys.exit()
     if starttime1 == None:
         starttime1 = 0.0
+    endtime1 = starttime1 + len(inputdata1) / Fs1
+    print(f"inputdata1 goes from {starttime1} to {endtime1}")
 
     if args.samplerate2 is not None:
         Fs2 = args.samplerate2
@@ -305,9 +448,19 @@ def showarbcorr(args):
         sys.exit()
     if starttime2 == None:
         starttime2 = 0.0
+    endtime2 = starttime2 + len(inputdata2) / Fs2
+    print(f"inputdata2 goes from {starttime2} to {endtime2}")
 
-    trimdata1 = inputdata1
-    trimdata2 = inputdata2
+    matchedinput1, matchedinput2, commonFs = tide_corr.matchsamplerates(
+        inputdata1,
+        Fs1,
+        inputdata2,
+        Fs2,
+        method="univariate",
+        debug=args.debug,
+    )
+    trimdata1 = matchedinput1
+    trimdata2 = matchedinput2
 
     if args.trimdata:
         minlen = np.min([len(trimdata1), len(trimdata2)])
@@ -324,12 +477,12 @@ def showarbcorr(args):
         if args.verbose:
             print("filtering to ", theprefilter.gettype(), " band")
     filtereddata1 = tide_math.corrnormalize(
-        theprefilter.apply(Fs1, trimdata1),
+        theprefilter.apply(commonFs, trimdata1),
         detrendorder=args.detrendorder,
         windowfunc=args.windowfunc,
     )
     filtereddata2 = tide_math.corrnormalize(
-        theprefilter.apply(Fs2, trimdata2),
+        theprefilter.apply(commonFs, trimdata2),
         detrendorder=args.detrendorder,
         windowfunc=args.windowfunc,
     )
@@ -341,9 +494,9 @@ def showarbcorr(args):
         print(f"{Fs1=}, {Fs2=}, {starttime1=}, {starttime2=}, {args.windowfunc=}")
     xcorr_x, thexcorr, corrFs, zeroloc = tide_corr.arbcorr(
         filtereddata1,
-        Fs1,
+        commonFs,
         filtereddata2,
-        Fs2,
+        commonFs,
         start1=starttime1,
         start2=starttime2,
         windowfunc=args.windowfunc,
@@ -375,10 +528,11 @@ def showarbcorr(args):
     thexcorr_trim = thexcorr[lowerlim:upperlim]
     print("trimmed Correlator lengths (x, y):", len(xcorr_x_trim), len(thexcorr_trim))
 
-    thepxcorr = pearsonr(filtereddata1, filtereddata2)
+    print(f"{len(filtereddata1)=}, {len(filtereddata2)=}")
+    thepxcorr = pearsonr(filtereddata1, filtereddata2).statistic
 
-    # intitialize the correlation fitter
-    thexsimfuncfitter = tide_classes.SimilarityFunctionFitter(
+    # initialize the correlation fitter
+    thexsimfuncfitter = tide_simFuncClasses.SimilarityFunctionFitter(
         corrtimeaxis=xcorr_x,
         lagmin=args.lagmin,
         lagmax=args.lagmax,
@@ -441,7 +595,7 @@ def showarbcorr(args):
     else:
         # report the pearson correlation
         if showpearson:
-            print("Pearson_R:\t", thepxcorr[0])
+            print("Pearson_R:\t", thepxcorr)
             print("")
         if args.label is not None:
             print(args.label, ":\t", -maxdelay)

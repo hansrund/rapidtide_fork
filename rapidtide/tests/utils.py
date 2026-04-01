@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -21,11 +21,13 @@ Utility functions for testing rapidtide.
 """
 
 import os
+from typing import Iterable
 
 import numpy as np
+import numpy.typing as npt
 
 
-def get_rapidtide_root():
+def get_rapidtide_root() -> str:
     """
     Returns the path to the base rapidtide directory, terminated with separator.
     Based on function by Yaroslav Halchenko used in Neurosynth Python package.
@@ -34,7 +36,7 @@ def get_rapidtide_root():
     return os.path.join(thisdir, "..") + os.path.sep
 
 
-def get_scripts_path():
+def get_scripts_path() -> str:
     """
     Returns the path to test datasets, terminated with separator. Test-related
     data are kept in tests folder in "testdata".
@@ -43,7 +45,7 @@ def get_scripts_path():
     return os.path.realpath(os.path.join(get_rapidtide_root(), "scripts")) + os.path.sep
 
 
-def get_test_data_path():
+def get_test_data_path() -> str:
     """
     Returns the path to test datasets, terminated with separator. Test-related
     data are kept in tests folder in "testdata".
@@ -52,38 +54,33 @@ def get_test_data_path():
     return os.path.realpath(os.path.join(get_rapidtide_root(), "tests", "testdata")) + os.path.sep
 
 
-def get_test_target_path():
-    """
-    Returns the path to test comparison data, terminated with separator. Test-related
-    data are kept in tests folder in "testtargets".
-    Based on function by Yaroslav Halchenko used in Neurosynth Python package.
-    """
-    return (
-        os.path.realpath(os.path.join(get_rapidtide_root(), "tests", "testtargets")) + os.path.sep
-    )
-
-
-def get_test_temp_path():
+def get_test_temp_path(local: bool = False) -> str:
     """
     Returns the path to test temporary directory, terminated with separator.
     Based on function by Yaroslav Halchenko used in Neurosynth Python package.
     """
-    return os.path.realpath(os.path.join(get_rapidtide_root(), "tests", "tmp")) + os.path.sep
+    if local:
+        return "./tmp"
+    else:
+        return os.path.realpath(os.path.join(get_rapidtide_root(), "tests", "tmp")) + os.path.sep
 
 
-def get_examples_path():
+def get_examples_path(local: bool = False) -> str:
     """
     Returns the path to examples src directory, where larger test files live, terminated with separator. Test-related
     data are kept in tests folder in "data".
     Based on function by Yaroslav Halchenko used in Neurosynth Python package.
     """
-    return (
-        os.path.realpath(os.path.join(get_rapidtide_root(), "data", "examples", "src"))
-        + os.path.sep
-    )
+    if local:
+        return "../data/examples/src"
+    else:
+        return (
+            os.path.realpath(os.path.join(get_rapidtide_root(), "data", "examples", "src"))
+            + os.path.sep
+        )
 
 
-def create_dir(thedir, debug=False):
+def create_dir(thedir: str, debug: bool = False) -> None:
     # create a directory if it doesn't exist
     try:
         os.makedirs(thedir)
@@ -96,8 +93,115 @@ def create_dir(thedir, debug=False):
             pass
 
 
-def mse(ndarr1, ndarr2):
+def mse(ndarr1: npt.NDArray, ndarr2: npt.NDArray) -> np.floating:
     """
     Compute mean-squared error.
     """
     return np.mean(np.square(ndarr2 - ndarr1))
+
+
+def get_example_and_temp_roots(local: bool = False) -> tuple[str, str]:
+    """
+    Return the standard example data and test temp roots as a tuple.
+    """
+    return get_examples_path(local), get_test_temp_path(local)
+
+
+def run_happy(inputargs: list[str]) -> None:
+    """
+    Run happy workflow from CLI-style argument list.
+    """
+    import rapidtide.workflows.happy as happy_workflow
+    import rapidtide.workflows.happy_parser as happy_parser
+
+    happy_workflow.happy_main(happy_parser.process_args(inputargs=inputargs))
+
+
+def run_rapidtide(inputargs: list[str]) -> None:
+    """
+    Run rapidtide workflow from CLI-style argument list.
+    """
+    import rapidtide.workflows.rapidtide as rapidtide_workflow
+    import rapidtide.workflows.rapidtide_parser as rapidtide_parser
+
+    rapidtide_workflow.rapidtide_main(rapidtide_parser.process_args(inputargs=inputargs))
+
+
+def run_retroregress(inputargs: list[str]) -> None:
+    """
+    Run retroregress workflow from CLI-style argument list.
+    """
+    import rapidtide.workflows.retroregress as rapidtide_retroregress
+
+    rapidtide_retroregress.retroregress(rapidtide_retroregress.process_args(inputargs=inputargs))
+
+
+def assert_output_maps_match(
+    map_names: Iterable[str],
+    output_root_1: str,
+    output_root_2: str,
+    temp_root: str,
+    absthresh: float = 1e-10,
+    msethresh: float = 1e-12,
+    spacetolerance: float = 1e-3,
+    debug: bool = False,
+) -> None:
+    """
+    Assert that selected NIFTI output maps match between two output roots.
+    """
+    import rapidtide.io as tide_io
+
+    for map_name in map_names:
+        filename1 = os.path.join(temp_root, f"{output_root_1}_desc-{map_name}_map.nii.gz")
+        filename2 = os.path.join(temp_root, f"{output_root_2}_desc-{map_name}_map.nii.gz")
+        assert tide_io.checkniftifilematch(
+            filename1,
+            filename2,
+            absthresh=absthresh,
+            msethresh=msethresh,
+            spacetolerance=spacetolerance,
+            debug=debug,
+        )
+
+
+def assert_text_vectors_match(
+    infile_spec: str,
+    outfile_spec: str,
+    msethresh: float = 2e-6,
+    aethresh: int = 2,
+    debug: bool = False,
+) -> None:
+    """
+    Assert that two one-column text vectors and metadata match.
+    """
+    import rapidtide.io as tide_io
+
+    insamplerate, instarttime, incolumns, indata, incompressed, infiletype = (
+        tide_io.readvectorsfromtextfile(infile_spec, onecol=True, debug=debug)
+    )
+    outsamplerate, outstarttime, outcolumns, outdata, outcompressed, outfiletype = (
+        tide_io.readvectorsfromtextfile(outfile_spec, onecol=True, debug=debug)
+    )
+
+    if debug:
+        print(f"{insamplerate=}, {outsamplerate=}")
+    assert insamplerate == outsamplerate
+    if debug:
+        print(f"{instarttime=}, {outstarttime=}")
+    assert instarttime == outstarttime
+    if debug:
+        print(f"{incompressed=}, {outcompressed=}")
+    assert incompressed == outcompressed
+    if debug:
+        print(f"{infiletype=}, {outfiletype=}")
+    assert infiletype == outfiletype
+    if debug:
+        print(f"{incolumns=}, {outcolumns=}")
+    assert incolumns == outcolumns
+    if debug:
+        print(f"{indata.shape=}, {outdata.shape=}")
+    assert indata.shape == outdata.shape
+    if debug:
+        print(f"{mse(indata, outdata)=}, {msethresh=}")
+    assert mse(indata, outdata) < msethresh
+    np.testing.assert_almost_equal(indata, outdata, aethresh)

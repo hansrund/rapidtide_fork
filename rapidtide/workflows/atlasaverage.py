@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -18,39 +18,47 @@
 #
 import argparse
 import sys
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
+from statsmodels.robust import mad
 
 import rapidtide.io as tide_io
 import rapidtide.maskutil as tide_mask
+import rapidtide.stats as tide_stats
 import rapidtide.workflows.parser_funcs as pf
 
 
-def summarize(thevoxels, method="mean"):
-    theshape = thevoxels.shape
-    if len(theshape) > 1:
-        numtimepoints = theshape[1]
-    else:
-        numtimepoints = 1
+def _get_parser() -> Any:
+    """
+    Construct and return an argument parser for the atlasaverage command-line tool.
 
-    if method == "mean":
-        themethod = np.mean
-    elif method == "sum":
-        themethod = np.sum
-    elif method == "median":
-        themethod = np.median
-    else:
-        print(f"illegal summary method {method} in summarize")
-        sys.exit()
+    This function builds an `argparse.ArgumentParser` object configured with all
+    required and optional arguments needed to run the `atlasaverage` utility. It
+    handles input validation for file paths and defines various options for
+    normalizing, summarizing, and filtering data within atlas regions.
 
-    if numtimepoints > 1:
-        regionsummary = np.nan_to_num(themethod(thevoxels, axis=0))
-    else:
-        regionsummary = np.nan_to_num(themethod(thevoxels))
-    return regionsummary
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser object for the atlasaverage tool.
 
+    Notes
+    -----
+    The parser is set up with:
+    - Two required positional arguments: `datafile` and `templatefile`.
+    - One required positional argument: `outputroot`.
+    - Several optional arguments controlling normalization, summarization,
+      masking, and output formatting.
 
-def _get_parser():
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['data.nii', 'atlas.nii', 'output'])
+    >>> print(args.datafile)
+    'data.nii'
+    """
     # get the command line parameters
     parser = argparse.ArgumentParser(
         prog="atlasaverage",
@@ -84,12 +92,25 @@ def _get_parser():
         default="none",
     )
     parser.add_argument(
+        "--numpercentiles",
+        dest="numpercentiles",
+        metavar="NPCT",
+        type=int,
+        help=(
+            "Number of evenly spaced percentiles between 0 and 100 (not including the end points) to calculate "
+            "in each region.  For example, If NPCT = 1, calculate the 0th, 50th, and 100th percentiles."
+        ),
+        default=1,
+    )
+    parser.add_argument(
         "--summarymethod",
         dest="summarymethod",
         action="store",
         type=str,
-        choices=["mean", "median", "sum"],
-        help=("Method to summarize a region.  Choices are 'mean' (default), 'median', and 'sum'."),
+        choices=["mean", "median", "sum", "std", "MAD", "CoV"],
+        help=(
+            "Method to summarize the voxels in a region.  Choices are 'mean' (default), 'median', 'sum', 'std', 'MAD', and 'CoV'."
+        ),
         default="mean",
     )
     parser.add_argument(
@@ -105,6 +126,15 @@ def _get_parser():
         help=(
             "The name of of a text file containing the integer region numbers to summarize, one per line.  "
             "Values that do not exist in the atlas will return NaNs."
+        ),
+        default=None,
+    )
+    parser.add_argument(
+        "--regionlabelfile",
+        type=lambda x: pf.is_valid_file(parser, x),
+        help=(
+            "The name of of a text file containing the labels of the regions, one per line.  The first line is "
+            "the label integer value 1, etc."
         ),
         default=None,
     )
@@ -167,7 +197,274 @@ def _get_parser():
     return parser
 
 
-def atlasaverage(args):
+def summarizevoxels(thevoxels: NDArray, method: str = "mean") -> float:
+    """
+    Summarize voxel data using specified statistical method.
+
+    Parameters
+    ----------
+    thevoxels : ndarray
+        Input voxel data array. Can be 1D or 2D, where 2D arrays are interpreted
+        as time series with shape (voxels, timepoints).
+    method : str, default="mean"
+        Summary method to apply. Options are:
+        - "mean": Compute mean along axis 0
+        - "sum": Compute sum along axis 0
+        - "median": Compute median along axis 0
+        - "std": Compute standard deviation along axis 0
+        - "MAD": Compute median absolute deviation along axis 0
+        - "CoV": Compute coefficient of variation (std/mean) along axis 0
+
+    Returns
+    -------
+    float or ndarray
+        Summary statistic(s) of the voxel data. Returns a scalar for 1D input
+        or array of statistics for 2D input along axis 0.
+
+    Notes
+    -----
+    - NaN values are converted to zero using `np.nan_to_num` before computation
+    - For coefficient of variation ("CoV"), the result is multiplied by 100 to
+      express as percentage
+    - When input is 1D, time dimension is treated as single timepoint
+    - The function handles both 1D and 2D input arrays appropriately
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> voxels = np.array([[1, 2, 3], [4, 5, 6]])
+    >>> summarizevoxels(voxels, method="mean")
+    array([2.5, 3.5, 4.5])
+
+    >>> summarizevoxels(voxels, method="CoV")
+    array([40.82482905, 33.33333333, 25.        ])
+    """
+    theshape = thevoxels.shape
+    if len(theshape) > 1:
+        numtimepoints = theshape[1]
+    else:
+        numtimepoints = 1
+
+    if method == "CoV":
+        if numtimepoints > 1:
+            regionsummary = 100.0 * np.nan_to_num(
+                np.std(thevoxels, axis=0) / np.mean(thevoxels, axis=0)
+            )
+        else:
+            regionsummary = 100.0 * np.nan_to_num(np.std(thevoxels) / np.mean(thevoxels))
+    else:
+        if method == "mean":
+            themethod = np.mean
+        elif method == "sum":
+            themethod = np.sum
+        elif method == "median":
+            themethod = np.median
+        elif method == "std":
+            themethod = np.std
+        elif method == "MAD":
+            themethod = mad
+        else:
+            print(f"illegal summary method {method} in summarizevoxels")
+            sys.exit()
+
+        if numtimepoints > 1:
+            regionsummary = np.nan_to_num(themethod(thevoxels, axis=0))
+        else:
+            regionsummary = np.nan_to_num(themethod(thevoxels))
+    return regionsummary
+
+
+def get4Dtimecourses(
+    regionlist: list[int],
+    inputvoxels: NDArray,
+    themask: NDArray,
+    templatevoxels: NDArray,
+    normmethod: str = "none",
+    summarymethod: str = "mean",
+    debug: bool = False,
+) -> NDArray:
+    """Extract and summarize timecourses for each atlas region from a 4D dataset.
+
+    For each value in ``regionlist``, selects the voxels where the
+    masked template matches that value, demeans each voxel timecourse,
+    optionally normalizes by a per-voxel scale factor, then reduces the
+    voxel set to a single representative timecourse using ``summarymethod``.
+
+    Parameters
+    ----------
+    regionlist : list[int]
+        Ordered list of integer region labels to process.  Region label ``k``
+        is written to row ``k-1`` of the output array.
+    inputvoxels : NDArray
+        2D array of shape ``(num_voxels, num_timepoints)`` containing the
+        flattened 4D image data.
+    themask : NDArray
+        1D boolean or integer array of length ``num_voxels``.  Voxels where
+        the mask is zero are excluded from every region.
+    templatevoxels : NDArray
+        1D integer array of length ``num_voxels`` containing atlas region
+        labels.  A voxel belongs to region ``k`` when
+        ``templatevoxels * themask == k``.
+    normmethod : {"none", "pct", "var", "std", "p2p"}, optional
+        Per-voxel normalization applied after demeaning:
+
+        * ``"none"``  – no normalization (scale factor = 1).
+        * ``"pct"``   – divide by the voxel's temporal mean (percent-signal
+          change convention).
+        * ``"var"``   – divide by the voxel's temporal variance.
+        * ``"std"``   – divide by the voxel's temporal standard deviation.
+        * ``"p2p"``   – divide by the voxel's peak-to-peak amplitude.
+
+        Default is ``"none"``.
+    summarymethod : str, optional
+        Method passed to :func:`summarizevoxels` for collapsing the voxel
+        set into a single timecourse (e.g. ``"mean"``, ``"median"``,
+        ``"std"``, ``"sum"``, ``"CoV"``).  Default is ``"mean"``.
+    debug : bool, optional
+        If ``True``, print per-region shape and normalization-factor arrays.
+        Default is ``False``.
+
+    Returns
+    -------
+    NDArray
+        2D array of shape ``(len(regionlist), num_timepoints)`` where row
+        ``i`` contains the summarized timecourse for ``regionlist[i]``.
+        Regions with no unmasked voxels retain the zero-initialized values.
+
+    Raises
+    ------
+    Exception
+        Re-raises (bare ``raise``) if ``normmethod`` is not one of the
+        recognized options, after printing the parser help message.
+
+    Notes
+    -----
+    - Voxels whose normalization factor is exactly zero are left at zero
+      rather than divided, preventing NaN propagation.
+    - The output row index is ``theregion - 1``, so ``regionlist`` labels are
+      assumed to be 1-based.
+    """
+    print("processing 4D input file")
+    numregions = len(regionlist)
+    numtimepoints = inputvoxels.shape[1]
+    timecourses = np.zeros((len(regionlist), numtimepoints), dtype="float")
+    for theregion in regionlist:
+        theregionvoxels = inputvoxels[np.where(templatevoxels * themask == theregion)[0], :] + 0.0
+        print(
+            "extracting",
+            theregionvoxels.shape[1],
+            "timepoints from region",
+            theregion,
+            "of",
+            numregions,
+        )
+
+        # demean
+        themeans = np.mean(theregionvoxels, axis=1)
+        theregionvoxels -= themeans[:, None]
+
+        if normmethod == "none":
+            thenormfac = np.ones_like(themeans)
+        elif normmethod == "pct":
+            thenormfac = themeans
+        elif normmethod == "var":
+            thenormfac = np.var(theregionvoxels, axis=1)
+        elif normmethod == "std":
+            thenormfac = np.std(theregionvoxels, axis=1)
+        elif normmethod == "p2p":
+            thenormfac = np.max(theregionvoxels, axis=1) - np.min(theregionvoxels, axis=1)
+        else:
+            print("illegal normalization method", normmethod)
+            _get_parser().print_help()
+            raise
+        if debug:
+            print(theregionvoxels.shape, thenormfac.shape)
+        for theloc in range(theregionvoxels.shape[0]):
+            if thenormfac[theloc] != 0.0:
+                theregionvoxels[theloc, :] /= thenormfac[theloc]
+        if theregionvoxels.shape[1] > 0:
+            timecourses[theregion - 1, :] = summarizevoxels(theregionvoxels, method=summarymethod)
+
+    return timecourses
+
+
+def atlasaverage(args: Any) -> None:
+    """
+    Compute average timecourses or summary statistics for regions defined by an atlas.
+
+    This function reads fMRI data and a template (atlas) file, extracts timecourses
+    or summary statistics for each region in the atlas, and saves the results to
+    output files. It supports multiple normalization methods and can process both
+    3D and 4D input data.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Arguments parsed from command line. Expected attributes include:
+        - datafile : str
+            Path to the input fMRI NIfTI file.
+        - templatefile : str
+            Path to the template NIfTI file defining regions.
+        - normmethod : str
+            Normalization method for timecourses: 'none', 'pct', 'std', 'var', 'p2p'.
+        - outputroot : str
+            Root name for output files.
+        - debug : bool
+            If True, enable debug printing and save intermediate masks.
+        - includespec : str or None
+            Specification for including voxels in analysis.
+        - excludespec : str or None
+            Specification for excluding voxels from analysis.
+        - extramaskname : str or None
+            Path to an additional mask file.
+        - regionlabelfile : str or None
+            Path to a file containing region labels.
+        - regionlistfile : str or None
+            Path to a file listing regions to include.
+        - summarymethod : str
+            Method for summarizing voxel values (e.g., 'mean', 'median').
+        - datalabel : str or None
+            Label to prepend to output summary.
+        - ignorezeros : bool
+            If True, exclude zero voxels when computing summaries.
+        - numpercentiles : int
+            Number of percentiles to compute for each region.
+        - headerline : bool
+            If True, include a header line in the summary CSV.
+
+    Returns
+    -------
+    None
+        This function does not return a value but writes output files to disk.
+
+    Notes
+    -----
+    For 4D data, the function computes timecourses for each region and saves them
+    as a TSV file. For 3D data, it computes summary statistics and saves both
+    a labeled NIfTI file and a CSV/TSV summary.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     datafile='fmri.nii.gz',
+    ...     templatefile='atlas.nii.gz',
+    ...     normmethod='std',
+    ...     outputroot='output',
+    ...     debug=False,
+    ...     includespec=None,
+    ...     excludespec=None,
+    ...     extramaskname=None,
+    ...     regionlabelfile=None,
+    ...     regionlistfile=None,
+    ...     summarymethod='mean',
+    ...     datalabel=None,
+    ...     ignorezeros=False,
+    ...     numpercentiles=5,
+    ...     headerline=True
+    ... )
+    >>> atlasaverage(args)
+    """
     if args.normmethod == "none":
         print("will not normalize timecourses")
     elif args.normmethod == "pct":
@@ -197,11 +494,9 @@ def atlasaverage(args):
         sys.exit()
 
     print("reshaping")
-    xsize = thedims[1]
-    ysize = thedims[2]
-    numslices = thedims[3]
-    numtimepoints = thedims[4]
-    numvoxels = int(xsize) * int(ysize) * int(numslices)
+    xdim, ydim, numslices, numtimepoints = tide_io.parseniftidims(thedims)
+    xsize, ysize, slicethickness, tr = tide_io.parseniftisizes(thesizes)
+    numvoxels = int(xdim) * int(ydim) * int(numslices)
 
     templatevoxels = np.reshape(template_data, numvoxels).astype(int)
     inputvoxels = np.reshape(input_data, (numvoxels, numtimepoints))
@@ -239,14 +534,14 @@ def atlasaverage(args):
         numvoxels,
         extramask=args.extramaskname,
     )
-    themask = inputvoxels[:, 0] * 0 + 1
+    themask = np.ones_like(inputvoxels[:, 0])
     if args.debug:
         print(f"{themask.shape=}")
     if includemask is not None:
         themask = themask * includemask.reshape((numvoxels))
         if args.debug:
             tide_io.savetonifti(
-                includemask.reshape((xsize, ysize, numslices)),
+                includemask.reshape((xdim, ydim, numslices)),
                 template_hdr,
                 f"{args.outputroot}_includemask",
             )
@@ -254,7 +549,7 @@ def atlasaverage(args):
         themask = themask * (1 - excludemask.reshape((numvoxels)))
         if args.debug:
             tide_io.savetonifti(
-                excludemask.reshape((xsize, ysize, numslices)),
+                excludemask.reshape((xdim, ydim, numslices)),
                 template_hdr,
                 f"{args.outputroot}_excludemask",
             )
@@ -262,76 +557,83 @@ def atlasaverage(args):
         themask = themask * extramask.reshape((numvoxels))
         if args.debug:
             tide_io.savetonifti(
-                extramask.reshape((xsize, ysize, numslices)),
+                extramask.reshape((xdim, ydim, numslices)),
                 template_hdr,
                 f"{args.outputroot}_extramask",
             )
 
+    # get the region names
+    numregions = np.max(templatevoxels)
+    if args.regionlabelfile is None:
+        regionlabels = []
+        numdigits = int(np.log10(numregions)) + 1
+        for regnum in range(1, numregions + 1):
+            regionlabels.append(f"region_{str(regnum).zfill(numdigits)}")
+    else:
+        regionlabels = tide_io.readlabels(args.regionlabelfile)
+        if len(regionlabels) != numregions:
+            print(
+                f"Error: number of labels in label file ({len(regionlabels)}) does not match the number of regions in the template ({numregions})."
+            )
+            sys.exit()
+    if args.debug:
+        print(f"Region labels: {regionlabels}")
+
     # decide what regions we will summarize
     if args.regionlistfile is None:
         numregions = np.max(templatevoxels)
-        regionlist = range(1, numregions + 1)
+        regionlist = [x for x in range(1, numregions + 1)]
     else:
         regionlist = tide_io.readvec(args.regionlistfile).astype(int)
         numregions = len(regionlist)
-    timecourses = np.zeros((numregions, numtimepoints), dtype="float")
+        newlabels = []
+        for theregion in range(numregions):
+            newlabels.append(regionlabels[theregion])
+        regionlabels = newlabels
+    if args.debug:
+        print(f"Region labels to use: {regionlabels}")
+
     print(f"{numregions=}, {regionlist=}")
 
     if numtimepoints > 1:
-        print("processing 4D input file")
-        for theregion in regionlist:
-            theregionvoxels = (
-                inputvoxels[np.where(templatevoxels * themask == theregion)[0], :] + 0.0
-            )
-            print(
-                "extracting",
-                theregionvoxels.shape[1],
-                "voxels from region",
-                theregion,
-                "of",
-                numregions,
-            )
-
-            # demean
-            themeans = np.mean(theregionvoxels, axis=1)
-            theregionvoxels -= themeans[:, None]
-
-            if args.normmethod == "none":
-                thenormfac = themeans * 0.0 + 1.0
-            elif args.normmethod == "pct":
-                thenormfac = themeans
-            elif args.normmethod == "var":
-                thenormfac = np.var(theregionvoxels, axis=1)
-            elif args.normmethod == "std":
-                thenormfac = np.std(theregionvoxels, axis=1)
-            elif args.normmethod == "p2p":
-                thenormfac = np.max(theregionvoxels, axis=1) - np.min(theregionvoxels, axis=1)
-            else:
-                print("illegal normalization method", args.normmethod)
-                _get_parser().print_help()
-                raise
-            if args.debug:
-                print(theregionvoxels.shape, thenormfac.shape)
-            for theloc in range(theregionvoxels.shape[0]):
-                if thenormfac[theloc] != 0.0:
-                    theregionvoxels[theloc, :] /= thenormfac[theloc]
-            if theregionvoxels.shape[1] > 0:
-                timecourses[theregion - 1, :] = summarize(
-                    theregionvoxels, method=args.summarymethod
-                )
+        timecourses = get4Dtimecourses(
+            regionlist,
+            inputvoxels,
+            themask,
+            templatevoxels,
+            args.normmethod,
+            args.summarymethod,
+            args.debug,
+        )
         if args.debug:
             print("timecourses shape:", timecourses.shape)
-        tide_io.writenpvecs(timecourses, args.outputroot)
+        tide_io.writebidstsv(
+            args.outputroot,
+            timecourses,
+            1.0 / tr,
+            columns=regionlabels,
+            yaxislabel="delay offset",
+        )
     else:
         print("processing 3D input file")
-        outputvoxels = inputvoxels * 0.0
-        theregnums = []
+        outputvoxels = np.zeros_like(inputvoxels)
+        thereglabels = []
+        summarylabels = []
         thevals = []
+        thepercentiles = []
+        theregsizes = []
+        thefracs = np.linspace(0.0, 1.0, args.numpercentiles + 2, endpoint=True).tolist()
+        numsubregions = len(thefracs) - 1
+        segmentedatlasvoxels = np.zeros_like(inputvoxels)
+        if args.debug:
+            print(f"{len(regionlist)=}, {regionlist=}")
+            print(f"{len(regionlabels)=}, {regionlabels=}")
         if args.datalabel is not None:
-            theregnums.append("Region")
+            summarylabels.append("Region")
             thevals.append(args.datalabel)
         for theregion in regionlist:
-            theregnums.append(str(theregion))
+            thereglabels.append(regionlabels[theregion - 1])
+            summarylabels.append(regionlabels[theregion - 1])
             theregionvoxels = inputvoxels[np.where(templatevoxels * themask == theregion)]
             initnum = theregionvoxels.shape[0]
             if args.ignorezeros:
@@ -344,41 +646,84 @@ def atlasaverage(args):
                 if args.debug:
                     print(
                         f"extracting {theregionvoxels.shape[0]} "
-                        f"non-zero voxels from region {theregion} of {numregions}{extrabit}"
+                        f"non-zero voxels from region {theregion} of {numregions}{extrabit} "
+                        f"({thereglabels[-1]})"
                     )
             else:
                 if args.debug:
                     print(
                         f"extracting {theregionvoxels.shape[0]} "
-                        f"voxels from region {theregion} of {numregions}"
+                        f"voxels from region {theregion} of {numregions} "
+                        f"({thereglabels[-1]})"
                     )
             if theregionvoxels.shape[0] > 0:
-                regionval = summarize(theregionvoxels, method=args.summarymethod)
+                regionval = summarizevoxels(theregionvoxels, method=args.summarymethod)
+                regionsizes = theregionvoxels.shape[0]
+                regionpercentiles = [
+                    f"{num:.4f}"
+                    for num in tide_stats.getfracvals(
+                        theregionvoxels,
+                        thefracs,
+                        nozero=True,
+                        debug=False,
+                    )
+                ]
                 outputvoxels[np.where(templatevoxels == theregion)] = regionval
                 thevals.append(str(regionval))
+                theregsizes.append(str(regionsizes))
+                thepercentiles.append(regionpercentiles)
             else:
                 if args.debug:
                     print(f"\tregion {theregion} is empty")
                 thevals.append("None")
+                continue
+            for thesubregion in range(numsubregions):
+                scratchvoxels = np.zeros_like(inputvoxels)
+                subregionkey = 1 + (theregion - 1) * numsubregions + thesubregion
+                lowerlim = float(regionpercentiles[thesubregion])
+                upperlim = float(regionpercentiles[thesubregion + 1])
+                scratchvoxels[np.where(lowerlim <= inputvoxels)] = subregionkey
+                if thesubregion < numsubregions - 1:
+                    scratchvoxels[np.where(inputvoxels >= upperlim)] = 0
+                scratchvoxels[np.where(templatevoxels * themask != theregion)] = 0
+                segmentedatlasvoxels += scratchvoxels
         template_hdr["dim"][4] = 1
         tide_io.savetonifti(
-            outputvoxels.reshape((xsize, ysize, numslices)),
+            outputvoxels.reshape((xdim, ydim, numslices)),
             template_hdr,
             args.outputroot,
         )
+        tide_io.savetonifti(
+            segmentedatlasvoxels.reshape((xdim, ydim, numslices)),
+            template_hdr,
+            args.outputroot + "_percentiles",
+        )
+
         if args.includename is not None or args.excludename is not None:
             tide_io.savetonifti(
-                (templatevoxels * themask).reshape((xsize, ysize, numslices)),
+                (templatevoxels * themask).reshape((xdim, ydim, numslices)),
                 template_hdr,
                 f"{args.outputroot}_maskedatlas",
             )
         if args.headerline:
             tide_io.writevec(
-                [",".join(theregnums), ",".join(thevals)],
+                np.array([",".join(summarylabels), ",".join(thevals)]),
                 f"{args.outputroot}_regionsummaries.csv",
             )
         else:
             tide_io.writevec(
-                [",".join(thevals)],
+                np.array([",".join(thevals)]),
                 f"{args.outputroot}_regionsummaries.csv",
+            )
+
+        outlines = []
+        pctstrings = [f"{num:.0f}" for num in (np.array(thefracs) * 100.0).tolist()]
+        outlines.append("Region\tVoxels\t" + "pct-" + "\tpct-".join(pctstrings))
+        for idx, region in enumerate(thereglabels):
+            outlines.append(
+                region + "\t" + theregsizes[idx] + "\t" + "\t".join(thepercentiles[idx])
+            )
+            tide_io.writevec(
+                np.array(outlines),
+                f"{args.outputroot}_regionpercentiles.tsv",
             )

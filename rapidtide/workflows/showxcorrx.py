@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -18,20 +18,23 @@
 #
 import argparse
 import sys
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import matplotlib.cm as cm
 import numpy as np
 import scipy as sp
+from numpy.typing import NDArray
 from scipy.signal import correlate
 from scipy.stats import pearsonr
 
 import rapidtide.calcnullsimfunc as tide_nullsimfunc
 import rapidtide.correlate as tide_corr
 import rapidtide.fit as tide_fit
-import rapidtide.helper_classes as tide_classes
 import rapidtide.io as tide_io
 import rapidtide.miscmath as tide_math
 import rapidtide.peakeval as tide_peakeval
+import rapidtide.simFuncClasses as tide_simFuncClasses
 import rapidtide.stats as tide_stats
 import rapidtide.util as tide_util
 import rapidtide.workflows.parser_funcs as pf
@@ -40,9 +43,31 @@ DEFAULT_SIGMAMAX = 1000.0
 DEFAULT_SIGMAMIN = 0.25
 
 
-def _get_parser():
+def _get_parser() -> Any:
     """
-    Argument parser for showxcorrx
+    Argument parser for showxcorrx.
+
+    This function constructs and returns an `argparse.ArgumentParser` object configured
+    to handle command-line arguments for the `showxcorrx` utility. It supports a wide
+    range of options for loading time series data, preprocessing, cross-correlation
+    computation, and output formatting.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser for `showxcorrx`.
+
+    Notes
+    -----
+    The parser includes groups for general options, preprocessing, similarity function
+    options, output settings, and debugging. It supports optional arguments such as
+    sample rate specification, data filtering, detrending, correlation weighting,
+    and plotting controls.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args()
     """
     parser = argparse.ArgumentParser(
         prog="showxcorrx",
@@ -179,7 +204,7 @@ def _get_parser():
         default=False,
     )
 
-    pf.addpermutationopts(preproc, numreps=0)
+    pf.addpermutationopts(parser, numreps=0)
 
     # similarity function options
     similarityopts = parser.add_argument_group("Similarity function options")
@@ -258,7 +283,7 @@ def _get_parser():
     )
 
     # add plot appearance options
-    pf.addplotopts(parser, multiline=False)
+    pf.addplotopts(parser)
 
     # Miscellaneous options
     misc = parser.add_argument_group("Miscellaneous options")
@@ -317,13 +342,168 @@ def _get_parser():
     return parser
 
 
-def printthresholds(pcts, thepercentiles, labeltext):
+def printthresholds(pcts: Any, thepercentiles: Any, labeltext: Any) -> None:
+    """
+    Print thresholds with corresponding percentiles.
+
+    This function prints a formatted list of thresholds along with their
+    corresponding percentile values for statistical analysis reporting.
+
+    Parameters
+    ----------
+    pcts : Any
+        Array or list of percentile values to be printed
+    thepercentiles : Any
+        Array or list of percentile thresholds (typically between 0 and 1)
+    labeltext : Any
+        Text label to be printed before the threshold values
+
+    Returns
+    -------
+    None
+        This function prints to stdout and does not return any value
+
+    Notes
+    -----
+    The function formats the output to show "p < threshold: value" format
+    where the threshold is calculated as 1.0 - thepercentiles[i].
+
+    Examples
+    --------
+    >>> printthresholds([0.05, 0.01], [0.95, 0.99], "Significance Levels:")
+    Significance Levels:
+        p < 0.050 : 0.05
+        p < 0.010 : 0.01
+    """
     print(labeltext)
     for i in range(0, len(pcts)):
         print("\tp <", "{:.3f}".format(1.0 - thepercentiles[i]), ": ", pcts[i])
 
 
-def showxcorrx(args):
+def showxcorrx(args: Any) -> None:
+    """
+    Compute and display cross-correlation or mutual information between two time series.
+
+    This function performs cross-correlation or mutual information analysis between two
+    time series, with optional filtering, normalization, and statistical significance
+    testing. It supports various similarity metrics and can output results to files or
+    display plots.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Command-line arguments containing parameters for the analysis. Expected attributes include:
+        - infilename1, infilename2 : str
+            File names for the two time series.
+        - display : bool
+            Whether to display plots.
+        - samplerate : float or str
+            Sampling rate of the time series. If "auto", defaults to 1.0 Hz.
+        - startpoint, endpoint : float
+            Time range to analyze.
+        - trimdata : bool
+            Whether to trim data to the shortest length.
+        - invert : bool
+            Whether to invert the second time series.
+        - theprefilter : object
+            Filter object for preprocessing data.
+        - detrendorder : int
+            Order of detrending for correlation normalization.
+        - windowfunc : str
+            Window function for correlation normalization.
+        - corrweighting : str
+            Weighting method for correlation.
+        - zeropadding : int
+            Zero padding for correlation.
+        - smoothingtime : float
+            Smoothing time for mutual information calculation.
+        - minorm : bool
+            Whether to normalize mutual information.
+        - similaritymetric : str
+            Similarity metric to use ("correlation", "mutualinfo", "hybrid").
+        - lagmin, lagmax : float
+            Minimum and maximum lag for analysis.
+        - absmaxsigma, absminsigma : float
+            Sigma thresholds for peak fitting.
+        - cepstral : bool
+            Whether to compute cepstral delay.
+        - calccoherence : bool
+            Whether to compute coherence.
+        - calccsd : bool
+            Whether to compute cross-spectral density.
+        - numestreps : int
+            Number of bootstrap replicates for significance testing.
+        - showprogressbar : bool
+            Whether to show progress bar during bootstrap.
+        - permutationmethod : str
+            Permutation method for bootstrap.
+        - nprocs : int
+            Number of processes for parallel computation.
+        - summarymode : bool
+            Whether to output in summary format.
+        - resoutputfile : str
+            Output file for results.
+        - label : str
+            Label for output.
+        - labelline : bool
+            Whether to include label in output.
+        - colors : str
+            Comma-separated list of colors for plots.
+        - linewidths : str
+            Comma-separated list of line widths for plots.
+        - legendloc : int
+            Legend location for plots.
+        - legends : str
+            Legend labels for plots.
+        - dolegend : bool
+            Whether to display legend.
+        - thetitle : str
+            Title for plots.
+        - showxax, showyax : bool
+            Whether to show x and y axes.
+        - xlabel, ylabel : str
+            Axis labels.
+        - outputfile : str
+            Output file for plot.
+        - saveres : int
+            Resolution for saved plots.
+        - corroutputfile : str
+            Output file for correlation data.
+        - debug : bool
+            Whether to print debug information.
+        - verbose : bool
+            Whether to print verbose output.
+        - fontscalefac : float
+            Font scaling factor for plots.
+
+    Returns
+    -------
+    None
+        This function does not return a value but may display plots or write output files.
+
+    Notes
+    -----
+    The function supports multiple similarity metrics:
+    - "correlation": Pearson correlation coefficient
+    - "mutualinfo": Mutual information
+    - "hybrid": Combination of both metrics
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     infilename1='data1.txt',
+    ...     infilename2='data2.txt',
+    ...     display=True,
+    ...     samplerate=1.0,
+    ...     startpoint=0,
+    ...     endpoint=100,
+    ...     similaritymetric='correlation',
+    ...     lagmin=-10,
+    ...     lagmax=10
+    ... )
+    >>> showxcorrx(args)
+    """
     # set some default values
     zerooutbadfit = False
     peakfittype = "gauss"
@@ -454,12 +634,12 @@ def showxcorrx(args):
                 )
             )
         if (np.max(filtereddata1) - np.min(filtereddata1)) > 0.0:
-            thefit, filtereddata1 = tide_fit.mlregress(regressorvec, filtereddata1)
+            thefit, R2 = tide_fit.mlregress(regressorvec, filtereddata1)
         if (np.max(filtereddata2) - np.min(filtereddata2)) > 0.0:
-            thefit, filtereddata2 = tide_fit.mlregress(regressorvec, filtereddata2)
+            thefit, R2 = tide_fit.mlregress(regressorvec, filtereddata2)
 
     # initialize the Correlator and MutualInformationator
-    theCorrelator = tide_classes.Correlator(
+    theCorrelator = tide_simFuncClasses.Correlator(
         Fs=args.samplerate,
         ncprefilter=theprefilter,
         detrendorder=args.detrendorder,
@@ -469,7 +649,7 @@ def showxcorrx(args):
         debug=args.debug,
     )
     theCorrelator.setreftc(trimdata2 * flipfac)
-    theMutualInformationator = tide_classes.MutualInformationator(
+    theMutualInformationator = tide_simFuncClasses.MutualInformationator(
         Fs=args.samplerate,
         smoothingtime=args.smoothingtime,
         ncprefilter=theprefilter,
@@ -497,14 +677,22 @@ def showxcorrx(args):
     else:
         # do the correlation
         thexcorr, xcorr_x, globalmax = theCorrelator.run(trimdata1, trim=False)
+        if args.display and args.debug:
+            plt.plot(xcorr_x, thexcorr)
+            plt.show()
         print("Correlator lengths (x, y):", len(xcorr_x), len(thexcorr))
         if dumpfiltered:
             tide_io.writenpvecs(theCorrelator.preptesttc, "correlator_filtereddata1.txt")
             tide_io.writenpvecs(theCorrelator.prepreftc, "correlator_filtereddata2.txt")
+        if args.debug:
+            print(f"limits: {args.lagmin, args.lagmax}")
         theCorrelator.setlimits(
             int((-args.lagmin * args.samplerate) - 0.5), int((args.lagmax * args.samplerate) + 0.5)
         )
         thexcorr_trim, xcorr_x_trim, dummy = theCorrelator.getfunction(trim=True)
+        if args.display and args.debug:
+            plt.plot(xcorr_x_trim, thexcorr_trim)
+            plt.show()
         print("trimmed Correlator lengths (x, y):", len(xcorr_x_trim), len(thexcorr_trim))
 
     if args.cepstral:
@@ -550,8 +738,8 @@ def showxcorrx(args):
         )
 
     if args.similaritymetric == "mutualinfo":
-        # intitialize the similarity function fitter
-        themifitter = tide_classes.SimilarityFunctionFitter(
+        # initialize the similarity function fitter
+        themifitter = tide_simFuncClasses.SimilarityFunctionFitter(
             corrtimeaxis=MI_x_trim,
             lagmin=args.lagmin,
             lagmax=args.lagmax,
@@ -565,8 +753,8 @@ def showxcorrx(args):
         )
         maxdelaymi = MI_x_trim[np.argmax(theMI_trim)]
     else:
-        # intitialize the correlation fitter
-        thexsimfuncfitter = tide_classes.SimilarityFunctionFitter(
+        # initialize the correlation fitter
+        thexsimfuncfitter = tide_simFuncClasses.SimilarityFunctionFitter(
             corrtimeaxis=xcorr_x,
             lagmin=args.lagmin,
             lagmax=args.lagmax,
@@ -591,9 +779,9 @@ def showxcorrx(args):
         print("\n\nmaxdelay before refinement", maxdelay)
 
     timeaxis = np.linspace(0, 1.0, num=len(trimdata1), endpoint=False) / args.samplerate
-    thetc = trimdata1 * 0.0
+    thetc = np.zeros_like(trimdata1)
 
-    if args.similaritymetric == "hybrid":
+    if args.similaritymetric == "hybrid" or args.similaritymetric == "correlation":
         peakstartind = tide_util.valtoindex(xcorr_x, args.lagmin, discretization="floor")
         peakendind = tide_util.valtoindex(xcorr_x, args.lagmax, discretization="ceiling") + 1
         dummy, thepeaks = tide_peakeval._procOneVoxelPeaks(
@@ -676,17 +864,15 @@ def showxcorrx(args):
     if args.numestreps > 0:
         # generate a list of correlations from shuffled data
         print("calculating null crosscorrelations")
-        corrlist = tide_nullsimfunc.getNullDistributionDatax(
-            filtereddata2,
+        corrlist = tide_nullsimfunc.getNullDistributionData(
             args.samplerate,
             theCorrelator,
             thexsimfuncfitter,
+            None,
             numestreps=args.numestreps,
-            despeckle_thresh=1000.0,
             showprogressbar=args.showprogressbar,
             permutationmethod=args.permutationmethod,
             nprocs=args.nprocs,
-            fixdelay=False,
         )
 
         # calculate percentiles for the crosscorrelation from the distribution data
@@ -709,17 +895,15 @@ def showxcorrx(args):
             )
 
         print("calculating null Pearson correlations")
-        corrlist_pear = tide_nullsimfunc.getNullDistributionDatax(
-            filtereddata2,
+        corrlist_pear = tide_nullsimfunc.getNullDistributionData(
             args.samplerate,
             theCorrelator,
             thexsimfuncfitter,
+            None,
             numestreps=args.numestreps,
-            despeckle_thresh=1000.0,
             showprogressbar=args.showprogressbar,
             permutationmethod=args.permutationmethod,
             nprocs=args.nprocs,
-            fixdelay=True,
         )
 
         # calculate significance for the pearson correlation
@@ -743,7 +927,7 @@ def showxcorrx(args):
             tide_io.writenpvecs(corrlist_pear, "corrlist_pear.txt")
 
     if args.debug:
-        print(thepxcorr)
+        print(thepxcorr.statistic, thepxcorr.pvalue)
 
     if args.similaritymetric == "mutualinfo":
         print(f"{tcname1}[0] = {tcname2}[{-maxdelaymi} seconds]")
@@ -777,7 +961,7 @@ def showxcorrx(args):
                     "xcorr_maxdelay",
                 ]
                 thedataitems = [
-                    str(thepxcorr[0]),
+                    str(thepxcorr.statistic),
                     str(pearpcts_fit[0]),
                     str(R),
                     str(pcts_fit[0]),
@@ -786,11 +970,13 @@ def showxcorrx(args):
             else:
                 thelabelitems = ["pearson_R", "pearson_p", "xcorr_R", "xcorr_maxdelay"]
                 thedataitems = [
-                    str(thepxcorr[0]),
-                    str(thepxcorr[1]),
+                    str(thepxcorr.statistic),
+                    str(thepxcorr.pvalue),
                     str(R),
                     str(-maxdelay),
                 ]
+
+    if args.summarymode:
         if args.label is not None:
             thelabelitems = ["thelabel"] + thelabelitems
             thedataitems = [args.label] + thedataitems
@@ -806,7 +992,7 @@ def showxcorrx(args):
     """else:
         # report the pearson correlation
         if showpearson:
-            print("Pearson_R:\t", thepxcorr[0])
+            print("Pearson_R:\t", thepxcorr.statistic)
             if args.numestreps > 0:
                 for idx, percentile in enumerate(thepercentiles):
                     print(
@@ -862,51 +1048,55 @@ def showxcorrx(args):
         print("illegal legend location:", args.legendloc)
         sys.exit()
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    thelegend = []
-    if args.legends is not None:
-        thelegend.append = args.legends
-    else:
-        if args.similaritymetric == "mutualinfo":
-            thelegend.append("Mutual Information")
-            ax.plot(
-                MI_x_trim,
-                theMI_trim,
-                color=colorlist[0],
-                label=thelegend[0],
-                linewidth=thelinewidth[0],
-            )
-        else:
-            thelegend.append("Cross correlation")
-            ax.plot(
-                xcorr_x_trim,
-                thexcorr_trim,
-                color=colorlist[0],
-                label=thelegend[0],
-                linewidth=thelinewidth[0],
-            )
-    if args.dolegend:
-        ax.legend(thelegend, fontsize=thelegendfontsize, loc=args.legendloc)
-    ax.set_title("Similarity metric over the search range", fontsize=thetitlefontsize)
-    if args.showxax:
-        ax.tick_params(axis="x", labelsize=thexlabelfontsize, which="both")
-    if args.showyax:
-        ax.tick_params(axis="y", labelsize=theylabelfontsize, which="both")
-
     if args.display:
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        thelegend = []
+        if args.legends is not None:
+            thelegend.append = args.legends
+        else:
+            if args.similaritymetric == "mutualinfo":
+                thelegend.append("Mutual Information")
+                ax.plot(
+                    MI_x_trim,
+                    theMI_trim,
+                    color=colorlist[0],
+                    label=thelegend[0],
+                    linewidth=thelinewidth[0],
+                )
+            else:
+                thelegend.append("Cross correlation")
+                ax.plot(
+                    xcorr_x_trim,
+                    thexcorr_trim,
+                    color=colorlist[0],
+                    label=thelegend[0],
+                    linewidth=thelinewidth[0],
+                )
+        if args.dolegend:
+            ax.legend(thelegend, fontsize=thelegendfontsize, loc=args.legendloc)
+        if args.thetitle is not None:
+            ax.set_title(args.thetitle, fontsize=thetitlefontsize)
+        else:
+            ax.set_title("Similarity metric over the search range", fontsize=thetitlefontsize)
+        if args.showxax:
+            ax.set_xlabel(args.xlabel, fontsize=thexlabelfontsize, fontweight="bold")
+            ax.tick_params(axis="x", labelsize=thexlabelfontsize, which="both")
+        if args.showyax:
+            ax.set_ylabel(args.ylabel, fontsize=theylabelfontsize, fontweight="bold")
+            ax.tick_params(axis="y", labelsize=theylabelfontsize, which="both")
         if args.outputfile is not None:
             plt.savefig(args.outputfile, bbox_inches="tight", dpi=args.saveres)
         else:
             plt.show()
 
-    if args.calccoherence:
+    if args.display and args.calccoherence:
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.plot(fC, np.sqrt(np.abs(Cxy)) / np.max(np.sqrt(np.abs(Cxy))), "b")
         ax.set_title("Coherence")
 
-    if args.calccsd:
+    if args.display and args.calccsd:
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.plot(fP, np.sqrt(np.abs(Pxy)) / np.max(np.sqrt(np.abs(Pxy))), "g")

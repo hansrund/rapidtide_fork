@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 
+import numpy as np
+
 import rapidtide.filter as tide_filt
 import rapidtide.io as tide_io
 import rapidtide.miscmath as tide_math
 
 
 def getperiodic(inputdata, Fs, fundfreq, ncomps=1, width=0.4, debug=False):
-    outputdata = inputdata * 0.0
+    outputdata = np.zeros_like(inputdata)
     lowerdist = fundfreq - fundfreq / (1.0 + width)
     upperdist = fundfreq * width
     if debug:
@@ -53,7 +55,7 @@ for ncomps in range(1, 4):
             0.9,
             ncomps=ncomps,
         )
-    )
+    )[0]
     tide_io.writebidstsv(
         outputroot + "_desc-filtertest_timeseries",
         filthiresfund,

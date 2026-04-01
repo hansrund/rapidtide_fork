@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -21,10 +21,13 @@ import warnings
 warnings.simplefilter(action="ignore", category=FutureWarning)
 import argparse
 import sys
+from argparse import Namespace
 
 import matplotlib.cm as cm
 import numpy as np
+from matplotlib import rcParams
 from matplotlib.pyplot import figure, savefig, setp, show
+from numpy.typing import NDArray
 
 import rapidtide.filter as tide_filt
 import rapidtide.fit as tide_fit
@@ -41,11 +44,79 @@ except ImportError:
     haveseaborn = False
 
 
-def phase(mcv):
+def phase(mcv: NDArray[np.complex128]) -> NDArray[np.float64]:
+    """
+    Compute the phase angle of complex numbers.
+
+    This function calculates the phase angle (also known as the argument) of complex numbers
+    using the arctan2 function, which correctly handles all quadrants and avoids division
+    by zero errors that could occur with the standard arctan function.
+
+    Parameters
+    ----------
+    mcv : ndarray of complex128
+        Input array of complex numbers for which to compute the phase angles.
+
+    Returns
+    -------
+    ndarray of float64
+        Array of phase angles in radians, with values in the range [-π, π].
+        The phase angle is computed as atan2(imaginary_part, real_part).
+
+    Notes
+    -----
+    The phase angle is computed using `np.arctan2(mcv.imag, mcv.real)` which correctly
+    handles the quadrant determination and avoids ambiguity that would occur with
+    `np.arctan(mcv.imag / mcv.real)`.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> z = np.array([1+0j, 0+1j, -1+0j, 0-1j])
+    >>> phase(z)
+    array([ 0.        ,  1.57079633,  3.14159265, -1.57079633])
+
+    >>> z = np.array([1+1j, -1+1j, -1-1j, 1-1j])
+    >>> phase(z)
+    array([ 0.78539816,  2.35619449, -2.35619449, -0.78539816])
+    """
     return np.arctan2(mcv.imag, mcv.real)
 
 
-def _get_parser():
+def _get_parser() -> argparse.ArgumentParser:
+    """
+    Create and configure an argument parser for the showtc command-line tool.
+
+    This function constructs an `argparse.ArgumentParser` object with a set of
+    predefined arguments for plotting data from text files. It supports various
+    display modes, sampling options, and plotting configurations.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser for the showtc tool.
+
+    Notes
+    -----
+    The parser includes support for:
+
+    - Input file specification with optional column selections
+    - Sampling rate or sample time configuration
+    - Display mode options: time series, power spectrum, or phase spectrum
+    - Plot format options: overlaid, separate, or separately linked
+    - Waterfall plotting for multiple timecourses
+    - Data normalization and transposition
+    - Plot appearance customization via `pf.addplotopts`
+    - Time range selection and header skipping
+    - Debugging and version information
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['file1.txt', 'file2.txt'])
+    >>> print(args.textfilenames)
+    ['file1.txt', 'file2.txt']
+    """
     parser = argparse.ArgumentParser(
         prog="showtc",
         description="Plots the data in text files.",
@@ -122,7 +193,6 @@ def _get_parser():
         help="Plot multiple timecourses with OFFSET between them (use negative OFFSET to set automatically).",
         default=0.0,
     )
-
     parser.add_argument(
         "--transpose",
         action="store_true",
@@ -166,6 +236,13 @@ def _get_parser():
         default=0,
     )
     parser.add_argument(
+        "--fullxrange",
+        dest="fullxrange",
+        action="store_true",
+        help="Set xrange to be the overall range of all files.",
+        default=False,
+    )
+    parser.add_argument(
         "--debug",
         dest="debug",
         action="store_true",
@@ -179,7 +256,96 @@ def _get_parser():
     return parser
 
 
-def showtc(args):
+def showtc(args: Namespace) -> None:
+    """
+    Display time series or spectral data from text files with customizable plotting options.
+
+    This function reads time series data from one or more text files and plots it
+    in either time domain or frequency domain (power or phase). It supports various
+    display modes, plot formatting options, and customization of colors, legends,
+    and axis labels.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        A namespace object containing the following attributes:
+        - samplerate : float or str
+            Sampling rate of the data. If "auto", defaults to 1.0.
+        - displaymode : str
+            Display mode: "time", "power", or "phase".
+        - plotformat : str
+            Plot formatting: "overlaid", "separate", or "separatelinked".
+        - colors : str, optional
+            Comma-separated list of color names for the lines.
+        - legends : str, optional
+            Comma-separated list of legend labels.
+        - dolegend : bool
+            Whether to display legends.
+        - linewidths : str, optional
+            Comma-separated list of line widths.
+        - legendloc : int
+            Legend location (0-10).
+        - thestarttime : float, optional
+            Start time for data selection.
+        - theendtime : float, optional
+            End time for data selection.
+        - textfilenames : list of str
+            List of text file names to read data from.
+        - dotranspose : bool
+            Whether to transpose the input data.
+        - normall : bool
+            Whether to normalize all data.
+        - fullxrange : bool
+            Whether to use full x-axis range.
+        - voffset : float
+            Vertical offset for overlaid plots.
+        - aspectratio : float
+            Physical aspect ratio (width/height) for the plot area. In separate formats,
+            each subplot uses this same ratio.
+        - dowaterfall : bool
+            Whether to create a waterfall plot.
+        - fontscalefac : float
+            Font scaling factor.
+        - thetitle : str, optional
+            Title for the plot.
+        - xlabel : str, optional
+            X-axis label.
+        - ylabel : str, optional
+            Y-axis label.
+        - showxax : bool
+            Whether to show x-axis labels.
+        - showyax : bool
+            Whether to show y-axis labels.
+        - outputfile : str, optional
+            Output file name for saving the plot.
+        - saveres : int
+            Resolution for saved plots.
+        - debug : bool
+            Whether to print debug information.
+
+    Returns
+    -------
+    None
+        This function does not return a value but displays or saves the plot.
+
+    Notes
+    -----
+    - The function handles multiple input files and concatenates data.
+    - Spectral data is computed using Hamming windowing by default.
+    - Time series data is plotted with time on x-axis and values on y-axis.
+    - Spectral data is plotted with frequency on x-axis and either power or phase on y-axis.
+    - The function supports automatic detection of file types and column specifications.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace()
+    >>> args.samplerate = 1.0
+    >>> args.displaymode = "time"
+    >>> args.plotformat = "separate"
+    >>> args.textfilenames = ["data1.txt", "data2.txt"]
+    >>> showtc(args)
+    """
     # set the sample rate
     if args.samplerate == "auto":
         samplerate = 1.0
@@ -270,6 +436,7 @@ def showtc(args):
     overallstarttime = None
 
     # read in all the data
+    numplots = 0
     for i in range(0, len(args.textfilenames)):
         thisfilename, thiscolspec = tide_io.parsefilespec(args.textfilenames[i])
 
@@ -341,6 +508,7 @@ def showtc(args):
             print("   ", invecs.shape[0], " columns")
 
         for j in range(0, invecs.shape[0]):
+            numplots += 1
             if args.debug:
                 print("appending vector number ", j)
             if dospectrum:
@@ -390,7 +558,6 @@ def showtc(args):
                             linelabels.append("column" + str(j).zfill(2))
                         else:
                             linelabels.append(thisfilename + "_column" + str(j).zfill(2))
-
                     else:
                         if shortcolnames:
                             linelabels.append(colnames[j])
@@ -399,11 +566,7 @@ def showtc(args):
                 else:
                     linelabels.append(thisfilename)
             else:
-                linelabels.append(legends[i % len(legends)])
-                """if invecs.shape[0] > 1:
-                    linelabels.append(legends[i % len(legends)] + '_column' + str(j).zfill(2))
-                else:
-                    linelabels.append(legends[i % len(legends)])"""
+                linelabels.append(legends[(numplots - 1) % len(legends)])
             samplerates.append(thissamplerate + 0.0)
             if args.debug:
                 print(
@@ -429,7 +592,10 @@ def showtc(args):
     for thevec in xvecs:
         overallxmax = np.max([np.max(thevec), overallxmax])
         overallxmin = np.min([np.min(thevec), overallxmin])
-    xrange = (np.max([overallxmin, args.thestarttime]), np.min([overallxmax, args.theendtime]))
+    if args.fullxrange:
+        xrange = (overallxmin, overallxmax)
+    else:
+        xrange = (np.max([overallxmin, args.thestarttime]), np.min([overallxmax, args.theendtime]))
     ymins = []
     ymaxs = []
     for thevec in yvecs:
@@ -488,14 +654,32 @@ def showtc(args):
     else:
         colorlist = [cm.nipy_spectral(float(i) / numvecs) for i in range(numvecs)]
 
-    fig = figure()
+    subplot_width_frac = rcParams["figure.subplot.right"] - rcParams["figure.subplot.left"]
+    subplot_height_frac = rcParams["figure.subplot.top"] - rcParams["figure.subplot.bottom"]
+    if separate:
+        figheight = (
+            args.figurewidth
+            * subplot_width_frac
+            * numvecs
+            / (args.aspectratio * numplots * subplot_height_frac)
+        )
+    else:
+        figheight = (
+            args.figurewidth * subplot_width_frac / (args.aspectratio * subplot_height_frac)
+        )
+    fig = figure(figsize=(args.figurewidth, figheight))
+
     if separate:
         if args.thetitle is not None:
             fig.suptitle(args.thetitle, fontsize=thesuptitlefontsize)
         if linky:
-            axlist = fig.subplots(numvecs, sharex=True, sharey=True)[:]
+            theaxes = fig.subplots(numvecs, sharex=True, sharey=True)
         else:
-            axlist = fig.subplots(numvecs, sharex=True, sharey=False)[:]
+            theaxes = fig.subplots(numvecs, sharex=True, sharey=False)
+        if numvecs == 1:
+            axlist = [theaxes]
+        else:
+            axlist = np.ravel(theaxes).tolist()
     else:
         ax = fig.add_subplot(1, 1, 1)
         if args.thetitle is not None:
@@ -562,8 +746,6 @@ def showtc(args):
             ax.set_ylabel(args.ylabel, fontsize=theylabelfontsize, fontweight="bold")
         else:
             ax.yaxis.set_visible(False)
-
-    # fig.tight_layout()
 
     if args.outputfile is None:
         show()

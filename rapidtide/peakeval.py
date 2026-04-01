@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -19,8 +19,10 @@
 import gc
 import logging
 import warnings
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from tqdm import tqdm
 
 import rapidtide.fit as tide_fit
@@ -32,19 +34,19 @@ LGR = logging.getLogger("GENERAL")
 
 
 def _procOneVoxelPeaks(
-    vox,
-    thetc,
-    theMutualInformationator,
-    fmri_x,
-    fmritc,
-    os_fmri_x,
-    xcorr_x,
-    thexcorr,
-    bipolar=False,
-    oversampfactor=1,
-    sort=True,
-    interptype="univariate",
-):
+    vox: int,
+    thetc: NDArray,
+    theMutualInformationator: Any,
+    fmri_x: NDArray,
+    fmritc: NDArray,
+    os_fmri_x: NDArray,
+    xcorr_x: NDArray,
+    thexcorr: NDArray,
+    bipolar: bool = False,
+    oversampfactor: int = 1,
+    sort: bool = True,
+    interptype: str = "univariate",
+) -> tuple[int, list]:
     if oversampfactor >= 1:
         thetc[:] = tide_resample.doresample(fmri_x, fmritc, os_fmri_x, method=interptype)
     else:
@@ -63,23 +65,22 @@ def _procOneVoxelPeaks(
 
 
 def peakevalpass(
-    fmridata,
-    referencetc,
-    fmri_x,
-    os_fmri_x,
-    theMutualInformationator,
-    xcorr_x,
-    corrdata,
-    nprocs=1,
-    alwaysmultiproc=False,
-    bipolar=False,
-    oversampfactor=1,
-    interptype="univariate",
-    showprogressbar=True,
-    chunksize=1000,
-    rt_floatset=np.float64,
-    rt_floattype="float64",
-):
+    fmridata: NDArray,
+    referencetc: NDArray,
+    fmri_x: NDArray,
+    os_fmri_x: NDArray,
+    theMutualInformationator: Any,
+    xcorr_x: NDArray,
+    corrdata: NDArray,
+    nprocs: int = 1,
+    alwaysmultiproc: bool = False,
+    bipolar: bool = False,
+    oversampfactor: int = 1,
+    interptype: str = "univariate",
+    showprogressbar: bool = True,
+    chunksize: int = 1000,
+    rt_floattype: np.dtype = np.float64,
+) -> tuple[int, dict]:
     """
 
     Parameters
@@ -98,7 +99,6 @@ def peakevalpass(
     interptype
     showprogressbar
     chunksize
-    rt_floatset
     rt_floattype
 
     Returns

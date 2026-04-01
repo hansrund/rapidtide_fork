@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -19,22 +19,65 @@
 import argparse
 import os
 import sys
+from typing import Any
 
-import numpy as np
-
-import rapidtide.correlate as tide_corr
-import rapidtide.dlfilter as tide_dlfilt
-import rapidtide.filter as tide_filt
-import rapidtide.fit as tide_fit
+import rapidtide.dlfiltertorch as tide_dlfilt
+import rapidtide.happy_supportfuncs as happy_support
 import rapidtide.io as tide_io
 import rapidtide.miscmath as tide_math
-import rapidtide.util as tide_util
 import rapidtide.workflows.parser_funcs as pf
 
+DEFAULT_MODEL = "model_cnn_pytorch"
 
-def _get_parser():
+
+def findfirst(searchlist: list, available: list, debug: bool = False) -> tuple[int, str | None]:
+    if debug:
+        print(f"FINDFIRST: {searchlist=}, {available=}")
+    try:
+        index = available.index(searchlist[0])
+        return index, available[index]
+    except ValueError:
+        if len(searchlist) > 1:
+            if debug:
+                print("FINDFIRST: calling again")
+            return findfirst(searchlist[1:], available, debug=debug)
+        else:
+            if debug:
+                print("FINDFIRST: giving up")
+    return -1, None
+
+
+def _get_parser() -> Any:
     """
-    Argument parser for plethquality
+    Argument parser for applydlfilter.
+
+    This function creates and configures an argument parser for the `applydlfilter`
+    command-line tool, which applies a deep learning filter to a timecourse.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser object with defined arguments for `applydlfilter`.
+
+    Notes
+    -----
+    The parser includes the following required and optional arguments:
+
+    - ``infilename``: Input text file (or list of files) containing timecourse data.
+    - ``outfilename``: Output text file (or list of files) to save filtered data.
+    - ``--model``: Model root name to use for filtering (default: ``model_revised``).
+    - ``--filesarelists``: Flag indicating input file contains lists of filenames.
+    - ``--nodisplay``: Flag to disable plotting (for non-interactive use).
+    - ``--verbose``: Flag to enable verbose output.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['input.txt', 'output.txt', '--model', 'custom_model'])
+    >>> print(args.infilename)
+    'input.txt'
+    >>> print(args.model)
+    'custom_model'
     """
     parser = argparse.ArgumentParser(
         prog="applydlfilter",
@@ -60,8 +103,8 @@ def _get_parser():
         action="store",
         metavar="MODELROOT",
         type=str,
-        help=("Use model named MODELROOT (default is model_revised)."),
-        default="model_revised",
+        help=(f"Use model named MODELROOT (default is {DEFAULT_MODEL})."),
+        default=DEFAULT_MODEL,
     )
     parser.add_argument(
         "--filesarelists",
@@ -87,66 +130,62 @@ def _get_parser():
     return parser
 
 
-def checkcardmatch(reference, candidate, samplerate, refine=True, zeropadding=0, debug=False):
-    thecardfilt = tide_filt.NoncausalFilter(filtertype="cardiac")
-    trimlength = np.min([len(reference), len(candidate)])
-    thexcorr = tide_corr.fastcorrelate(
-        tide_math.corrnormalize(
-            thecardfilt.apply(samplerate, reference),
-            detrendorder=3,
-            windowfunc="hamming",
-        )[:trimlength],
-        tide_math.corrnormalize(
-            thecardfilt.apply(samplerate, candidate),
-            detrendorder=3,
-            windowfunc="hamming",
-        )[:trimlength],
-        usefft=True,
-        zeropadding=zeropadding,
-    )
-    xcorrlen = len(thexcorr)
-    sampletime = 1.0 / samplerate
-    xcorr_x = np.r_[0.0:xcorrlen] * sampletime - (xcorrlen * sampletime) / 2.0 + sampletime / 2.0
-    searchrange = 5.0
-    trimstart = tide_util.valtoindex(xcorr_x, -2.0 * searchrange)
-    trimend = tide_util.valtoindex(xcorr_x, 2.0 * searchrange)
-    (
-        maxindex,
-        maxdelay,
-        maxval,
-        maxsigma,
-        maskval,
-        failreason,
-        peakstart,
-        peakend,
-    ) = tide_fit.findmaxlag_gauss(
-        xcorr_x[trimstart:trimend],
-        thexcorr[trimstart:trimend],
-        -searchrange,
-        searchrange,
-        3.0,
-        refine=refine,
-        zerooutbadfit=False,
-        useguess=False,
-        fastgauss=False,
-        displayplots=False,
-    )
-    if debug:
-        print(
-            "CORRELATION: maxindex, maxdelay, maxval, maxsigma, maskval, failreason, peakstart, peakend:",
-            maxindex,
-            maxdelay,
-            maxval,
-            maxsigma,
-            maskval,
-            failreason,
-            peakstart,
-            peakend,
-        )
-    return maxval, maxdelay, failreason
+def applydlfilter(args: Any) -> None:
+    """
+    Apply a deep learning filter to fMRI data files.
 
+    This function reads fMRI data from input files, applies a deep learning filter
+    to denoise the data, and writes the filtered output to specified files. It supports
+    processing multiple files either from lists or a single file, and optionally displays
+    the filtering results using matplotlib.
 
-def applydlfilter(args):
+    Parameters
+    ----------
+    args : Any
+        An object containing the following attributes:
+        - `infilename` : str
+            Path to the input file or list of input files.
+        - `outfilename` : str
+            Path to the output file or list of output files.
+        - `filesarelists` : bool
+            If True, `infilename` and `outfilename` are treated as paths to text files
+            containing lists of input and output filenames, respectively.
+        - `model` : str
+            Path to the deep learning model to be used for filtering.
+        - `display` : bool
+            If True, displays the original and filtered data using matplotlib.
+        - `verbose` : bool
+            If True, prints verbose output during processing.
+
+    Returns
+    -------
+    None
+        This function does not return any value. It writes filtered data to files
+        and optionally displays plots.
+
+    Notes
+    -----
+    - The function assumes that the input data has a sampling rate of 25.0 Hz.
+    - If `filesarelists` is True, the input and output filenames are read from
+      text files, where each line contains a single filename.
+    - The function checks for matching list lengths when processing multiple files.
+    - If a bad points file is specified, it is read and used during filtering.
+    - The deep learning model is loaded from a predefined model path within the
+      `rapidtide` package.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     infilename="input.txt",
+    ...     outfilename="output.txt",
+    ...     filesarelists=False,
+    ...     model="model.h5",
+    ...     display=False,
+    ...     verbose=True
+    ... )
+    >>> applydlfilter(args)
+    """
     if args.display:
         import matplotlib as mpl
 
@@ -184,41 +223,144 @@ def applydlfilter(args):
     )
     thedlfilter = tide_dlfilt.DeepLearningFilter(modelpath=modelpath)
     thedlfilter.loadmodel(args.model)
-    model = thedlfilter.model
-    window_size = thedlfilter.window_size
     usebadpts = thedlfilter.usebadpts
+    showpleth = True
 
-    badpts = None
-    if usebadpts:
-        try:
-            badpts = tide_io.readvec(args.infilename.replace(".txt", "_badpts.txt"))
-        except:
-            print(
-                "bad points file",
-                args.infilename.replace(".txt", "_badpts.txt"),
-                "not found!",
-            )
-            sys.exit()
+    # set the list of column names
+    datanames = [
+        "cardiacfromfmri_25.0Hz",
+        "normcardiac_25.0Hz",
+        "normcardiacfromfmri_dlfiltered_25.0Hz",
+        "cardiacfromfmri_dlfiltered_25.0Hz",
+    ]
+    badptsnames = ["badpts"]
+    plethnames = [
+        "pleth",
+        "normpleth",
+        "plethenv",
+        "pleth_dlfiltered",
+    ]
 
     for idx, infilename in enumerate(infilenamelist):
         # read in the data
         if args.verbose:
             print("reading in", infilename)
-        fmridata = tide_io.readvec(infilename)
+        (
+            thesamplerate,
+            thestarttime,
+            thecolumns,
+            thedata,
+            compressed,
+            columnsource,
+            extrainfo,
+        ) = tide_io.readbidstsv(infilename, debug=args.verbose)
 
+        # check to see what we have in the file
+        if args.verbose:
+            print(f"File columns: {thecolumns}")
+
+        # get the data
+        datacol, dataname = findfirst(datanames, thecolumns, debug=args.verbose)
+        if dataname is None:
+            print("file contains no usable raw data")
+            sys.exit()
+        if args.verbose:
+            print(f"Data column: {datacol}, ({dataname})")
+        fmridata = thedata[datacol, :]
+
+        # get the badpts
+        badptscol, badptsname = findfirst(badptsnames, thecolumns, debug=args.verbose)
+        if usebadpts and (badptsname is None):
+            print("file contains no usable badpts data")
+            sys.exit()
+        if args.verbose:
+            print(f"Bad points column: {badptscol}, ({badptsname})")
+        if badptsname is None:
+            badpts = None
+        else:
+            badpts = thedata[badptscol, :]
+
+        # get the pleth (if it is there)
+        plethcol, plethname = findfirst(plethnames, thecolumns, debug=args.verbose)
+        if args.verbose:
+            print(f"Pleth column: {plethcol}, ({plethname})")
+            print(f"{thedata.shape=}")
+        if plethname is None:
+            plethwave = None
+        else:
+            plethwave = thedata[plethcol, :]
+
+        if args.verbose:
+            print("data is read")
+        if thesamplerate != 25.0:
+            print("sampling rate", thesamplerate)
+            sys.exit()
         if args.verbose:
             print("filtering...")
         predicteddata = thedlfilter.apply(fmridata, badpts=badpts)
+        if args.verbose:
+            print("done...")
+
+        # performance metrics
+        extradict = {}
+        maxval, maxdelay, failreason = happy_support.checkcardmatch(
+            fmridata, predicteddata, 25.0, debug=False
+        )
+        print(infilename, "max correlation of raw data to dl filtered data:", maxval)
+        extradict["corr_rawtodlfiltered"] = maxval + 0.0
+
+        if plethwave is not None:
+            maxval, maxdelay, failreason = happy_support.checkcardmatch(
+                fmridata, plethwave, 25.0, debug=False
+            )
+            print(infilename, "max correlation of raw data to target plethysmogram:", maxval)
+            extradict["corr_rawtopleth"] = maxval + 0.0
+
+            maxval, maxdelay, failreason = happy_support.checkcardmatch(
+                predicteddata, plethwave, 25.0, debug=False
+            )
+            print(
+                infilename, "max correlation of dl filtered data to target plethysmogram:", maxval
+            )
+            extradict["corr_dlfilteredtopleth"] = maxval + 0.0
 
         if args.verbose:
             print("writing to", outfilenamelist[idx])
-        tide_io.writevec(predicteddata, outfilenamelist[idx])
+        tide_io.writebidstsv(
+            outfilenamelist[idx],
+            predicteddata,
+            25.0,
+            extraheaderinfo=extradict,
+            columns=["filtered_signal"],
+            debug=args.verbose,
+        )
 
-        maxval, maxdelay, failreason = checkcardmatch(fmridata, predicteddata, 25.0, debug=False)
-        print(infilename, "max correlation input to output:", maxval)
+        # normalize
+        fmridata = tide_math.stdnormalize(fmridata)
+        predicteddata = tide_math.stdnormalize(predicteddata)
 
+        spacing = 3.0
+        numwaves = 2
+        if badpts is not None:
+            numwaves += 1
+        if plethwave is not None:
+            numwaves += 1
+        offset = (numwaves - 1) * spacing
         if args.display:
             plt.figure()
-            plt.plot(fmridata)
-            plt.plot(predicteddata)
+            legendlist = [dataname, "filtereddata"]
+            plt.plot(fmridata + offset)
+            offset += spacing
+            plt.plot(predicteddata + offset)
+            offset += spacing
+            if plethwave is not None:
+                legendlist.append(plethname)
+                plt.plot(plethwave + offset)
+                offset += spacing
+            if badpts is not None:
+                legendlist.append(badptsname)
+                plt.plot(badpts + offset)
+                offset += spacing
+            plt.legend(legendlist)
+            plt.title(args.model)
             plt.show()

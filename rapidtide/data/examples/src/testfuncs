@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -31,8 +31,8 @@ def test_funcs(displayplots=False, debug=False):
     loc = 5.0
     baseline = 0.0
 
-    gaussvals = xvals * 0.0
-    sincvals = xvals * 0.0
+    gaussvals = np.zeros_like(xvals)
+    sincvals = np.zeros_like(xvals)
 
     for i in range(len(xvals)):
         gaussvals[i] = tide_fit.gaussfunc(xvals[i], height, loc, width)

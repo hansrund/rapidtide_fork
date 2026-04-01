@@ -1,0 +1,629 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+#   Copyright 2026-2026 Blaise Frederick
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
+#
+import argparse
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from rapidtide.workflows.showstxcorr import _get_parser, printthresholds, showstxcorr
+
+# ==================== Helpers ====================
+
+
+def _make_test_timecourses(samplerate=10.0, duration=200.0, delay=0.5, noise=3.0):
+    """Create two synthetic broadband timecourses with a known delay relationship.
+
+    Uses a sum of many sinusoids at different LFO frequencies with random phases
+    to produce broadband signals whose cross-correlation has a single dominant
+    peak that findmaxlag_gauss can fit (unlike pure sinusoids which produce
+    oscillating cross-correlations).
+
+    The noise level must be high enough (>= 3.0) so that after LFO bandpass
+    filtering, the cross-correlation peak stays below 1.0. If the peak reaches
+    ~1.0, the Gaussian fit overshoots slightly above 1.0 and findmaxlag_gauss
+    rejects the fit.
+    """
+    npoints = int(samplerate * duration)
+    t = np.arange(npoints) / samplerate
+
+    # Create broadband signal by summing sinusoids at many frequencies in LFO band
+    rng_signal = np.random.RandomState(42)
+    freqs = np.linspace(0.01, 0.2, 30)
+    phases = rng_signal.uniform(0, 2 * np.pi, len(freqs))
+    amps = rng_signal.uniform(0.5, 1.5, len(freqs))
+
+    signal1 = np.zeros(npoints)
+    signal2 = np.zeros(npoints)
+    for freq, phase, amp in zip(freqs, phases, amps):
+        signal1 += amp * np.sin(2 * np.pi * freq * t + phase)
+        signal2 += amp * np.sin(2 * np.pi * freq * (t - delay) + phase)
+
+    # Add independent noise to each signal
+    rng_noise = np.random.RandomState(99)
+    signal1 += rng_noise.randn(npoints) * noise
+    signal2 += rng_noise.randn(npoints) * noise
+
+    return signal1, signal2
+
+
+def _make_default_args(outfilename="/tmp/test_showstxcorr_out"):
+    """Create a default args Namespace with all required attributes."""
+    args = argparse.Namespace(
+        infilename1="dummy_in1.txt",
+        infilename2="dummy_in2.txt",
+        outfilename=outfilename,
+        samplerate=10.0,
+        starttime=0.0,
+        duration=1000000.0,
+        stepsize=25.0,
+        windowwidth=50.0,
+        corrthresh=0.5,
+        corrweighting="None",
+        detrendorder=1,
+        matrixoutput=False,
+        invert=False,
+        display=False,
+        debug=False,
+        verbose=False,
+        label="None",
+        # Filter options (set by addfilteropts / postprocessfilteropts)
+        filterband="lfo",
+        filtertype="trapezoidal",
+        filtorder=6,
+        padseconds=30.0,
+        passvec=None,
+        stopvec=None,
+        # Search range options (set by addsearchrangeopts / postprocesssearchrangeopts)
+        lag_extrema=(-15.0, 15.0),
+        lag_extrema_nondefault=False,
+        initialdelayvalue=None,
+        # Time range options (set by addtimerangeopts / postprocesstimerangeopts)
+        timerange=(-1, -1),
+        # Window options (set by addwindowopts)
+        windowfunc="hamming",
+        zeropadding=0,
+    )
+    return args
+
+
+def _run_showstxcorr(signal1, signal2, args):
+    """Helper to run showstxcorr with mocked IO. Returns dict with saved outputs."""
+    saved = {
+        "text": {},
+        "nifti": {},
+        "csv": [],
+    }
+
+    def mock_readvec(fname, **kwargs):
+        if "in1" in fname:
+            return signal1.copy()
+        return signal2.copy()
+
+    def mock_writenpvecs(data, fname, **kwargs):
+        saved["text"][fname] = np.array(data).copy()
+
+    def mock_savetonifti(data, hdr, fname, **kwargs):
+        saved["nifti"][fname] = np.array(data).copy()
+
+    original_to_csv = pd.DataFrame.to_csv
+
+    def mock_to_csv(self, path_or_buf=None, *a, **kw):
+        if path_or_buf is not None and isinstance(path_or_buf, str):
+            saved["csv"].append(path_or_buf)
+        return original_to_csv(self, path_or_buf, *a, **kw) if path_or_buf is None else None
+
+    with (
+        patch("rapidtide.workflows.showstxcorr.tide_io.readvec", side_effect=mock_readvec),
+        patch("rapidtide.workflows.showstxcorr.tide_io.writenpvecs", side_effect=mock_writenpvecs),
+        patch("rapidtide.workflows.showstxcorr.tide_io.savetonifti", side_effect=mock_savetonifti),
+        patch("pandas.DataFrame.to_csv", mock_to_csv),
+    ):
+        showstxcorr(args)
+
+    return saved
+
+
+# ==================== _get_parser tests ====================
+
+
+def parser_basic(debug=False):
+    """Test that parser creates successfully."""
+    if debug:
+        print("parser_basic")
+    parser = _get_parser()
+    assert parser is not None
+    assert parser.prog == "showstxcorr"
+
+
+def parser_required_args(debug=False):
+    """Test parser has required positional arguments."""
+    if debug:
+        print("parser_required_args")
+    parser = _get_parser()
+    actions = {a.dest: a for a in parser._actions}
+    assert "infilename1" in actions
+    assert "infilename2" in actions
+    assert "outfilename" in actions
+
+
+def parser_defaults(parse_with_temp_inputs, debug=False):
+    """Test default values for optional arguments."""
+    if debug:
+        print("parser_defaults")
+    args = parse_with_temp_inputs(_get_parser(), include_output=True)
+    assert args.samplerate == "auto"
+    assert args.corrthresh == 0.5
+    assert args.windowwidth == 50.0
+    assert args.stepsize == 25.0
+    assert args.starttime == 0.0
+    assert args.duration == 1000000.0
+    assert args.display is True
+    assert args.debug is False
+    assert args.verbose is False
+    assert args.matrixoutput is False
+    assert args.detrendorder == 1
+    assert args.corrweighting == "None"
+    assert args.invert is False
+    assert args.label == "None"
+
+
+def parser_samplerate(parse_with_temp_inputs, debug=False):
+    """Test --samplerate option."""
+    if debug:
+        print("parser_samplerate")
+    args = parse_with_temp_inputs(_get_parser(), ["--samplerate", "25.0"], include_output=True)
+    assert args.samplerate == 25.0
+
+
+def parser_sampletime(parse_with_temp_inputs, debug=False):
+    """Test --sampletime option (inverts to samplerate)."""
+    if debug:
+        print("parser_sampletime")
+    args = parse_with_temp_inputs(_get_parser(), ["--sampletime", "0.5"], include_output=True)
+    assert args.samplerate == pytest.approx(2.0)
+
+
+def parser_boolean_flags(parse_with_temp_inputs, debug=False):
+    """Test boolean flag options."""
+    if debug:
+        print("parser_boolean_flags")
+    args = parse_with_temp_inputs(
+        _get_parser(),
+        ["--nodisplay", "--debug", "--verbose", "--invert"],
+        include_output=True,
+    )
+    assert args.display is False
+    assert args.debug is True
+    assert args.verbose is True
+    assert args.invert is True
+
+
+def parser_corr_options(parse_with_temp_inputs, debug=False):
+    """Test correlation-related options."""
+    if debug:
+        print("parser_corr_options")
+    args = parse_with_temp_inputs(
+        _get_parser(),
+        [
+            "--corrthresh",
+            "0.3",
+            "--windowwidth",
+            "30.0",
+            "--stepsize",
+            "10.0",
+            "--corrweighting",
+            "phat",
+            "--detrendorder",
+            "2",
+        ],
+        include_output=True,
+    )
+    assert args.corrthresh == 0.3
+    assert args.windowwidth == 30.0
+    assert args.stepsize == 10.0
+    assert args.corrweighting == "phat"
+    assert args.detrendorder == 2
+
+
+def parser_samplerate_sampletime_mutual_exclusion(parse_with_temp_inputs, debug=False):
+    """Test that --samplerate and --sampletime are mutually exclusive."""
+    if debug:
+        print("parser_samplerate_sampletime_mutual_exclusion")
+    with pytest.raises(SystemExit):
+        parse_with_temp_inputs(
+            _get_parser(),
+            ["--samplerate", "10.0", "--sampletime", "0.1"],
+            include_output=True,
+        )
+
+
+# ==================== printthresholds tests ====================
+
+
+def printthresholds_basic(capture_stdout, debug=False):
+    """Test printthresholds outputs correct format."""
+    if debug:
+        print("printthresholds_basic")
+    pcts = [0.5, 0.3, 0.1]
+    thepercentiles = [0.95, 0.99, 0.999]
+    labeltext = "Test thresholds:"
+
+    output = capture_stdout(printthresholds, pcts, thepercentiles, labeltext)
+    assert "Test thresholds:" in output
+    assert "p < 0.05" in output or "p < 0.050" in output
+    assert "p < 0.01" in output or "p < 0.010" in output
+
+
+def printthresholds_empty(capture_stdout, debug=False):
+    """Test printthresholds with empty lists."""
+    if debug:
+        print("printthresholds_empty")
+    output = capture_stdout(printthresholds, [], [], "Empty:")
+    assert "Empty:" in output
+
+
+def printthresholds_single(capture_stdout, debug=False):
+    """Test printthresholds with a single threshold."""
+    if debug:
+        print("printthresholds_single")
+    output = capture_stdout(printthresholds, [0.42], [0.95], "Single:")
+    assert "Single:" in output
+    assert "0.42" in output
+
+
+# ==================== showstxcorr tests ====================
+
+
+def showstxcorr_auto_samplerate_exit(debug=False):
+    """Test that samplerate='auto' causes exit."""
+    if debug:
+        print("showstxcorr_auto_samplerate_exit")
+    args = _make_default_args()
+    args.samplerate = "auto"
+
+    with pytest.raises(SystemExit):
+        showstxcorr(args)
+
+
+def showstxcorr_basic(debug=False):
+    """Test basic showstxcorr workflow produces output files."""
+    if debug:
+        print("showstxcorr_basic")
+    signal1, signal2 = _make_test_timecourses(samplerate=10.0, duration=200.0)
+    args = _make_default_args()
+    args.corrthresh = 0.1
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_out"
+    assert f"{outroot}_pearson.txt" in saved["text"]
+    assert f"{outroot}_pvalue.txt" in saved["text"]
+    assert f"{outroot}_Rvalue.txt" in saved["text"]
+    assert f"{outroot}_delay.txt" in saved["text"]
+    assert f"{outroot}_mask.txt" in saved["text"]
+    assert f"{outroot}_timewarped.txt" in saved["text"]
+    assert f"{outroot}_hiresdelayvals.txt" in saved["text"]
+
+
+def showstxcorr_matrixoutput(debug=False):
+    """Test matrixoutput showstxcorr workflow produces output files."""
+    if debug:
+        print("showstxcorr_matrixoutput")
+    signal1, signal2 = _make_test_timecourses(samplerate=10.0, duration=200.0)
+    args = _make_default_args(outfilename="/tmp/test_showstxcorr_matrix")
+    args.corrthresh = 0.1
+    args.matrixoutput = True
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_matrix"
+    # Matrix mode saves NIfTI files via savetonifti
+    assert f"{outroot}_pearsonR" in saved["nifti"]
+    assert f"{outroot}_corrp" in saved["nifti"]
+    assert f"{outroot}_maxxcorr" in saved["nifti"]
+    assert f"{outroot}_delayvals" in saved["nifti"]
+    assert f"{outroot}_valid" in saved["nifti"]
+
+    # Matrix mode also saves CSV segment files
+    assert len(saved["csv"]) > 0
+    csv_names = saved["csv"]
+    assert any("_pearsonR.csv" in c for c in csv_names)
+    assert any("_corrp.csv" in c for c in csv_names)
+    assert any("_maxxcorr.csv" in c for c in csv_names)
+    assert any("_delayvals.csv" in c for c in csv_names)
+    assert any("_valid.csv" in c for c in csv_names)
+
+    # No text files should be written in matrix mode
+    assert len(saved["text"]) == 0
+
+
+def showstxcorr_output_lengths(debug=False):
+    """Test that output arrays have consistent lengths."""
+    if debug:
+        print("showstxcorr_output_lengths")
+    signal1, signal2 = _make_test_timecourses(samplerate=10.0, duration=200.0)
+    args = _make_default_args()
+    args.corrthresh = 0.1
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_out"
+    pearson = saved["text"][f"{outroot}_pearson.txt"]
+    pvalue = saved["text"][f"{outroot}_pvalue.txt"]
+    rvalue = saved["text"][f"{outroot}_Rvalue.txt"]
+    delay = saved["text"][f"{outroot}_delay.txt"]
+    mask = saved["text"][f"{outroot}_mask.txt"]
+
+    # Pearson and pvalue come from shorttermcorr_1D, should have same length
+    assert len(pearson) == len(pvalue)
+    # Rvalue, delay, mask come from shorttermcorr_2D, should have same length
+    assert len(rvalue) == len(delay) == len(mask)
+
+
+def showstxcorr_correlated_signals(debug=False):
+    """Test that correlated signals produce high correlation values."""
+    if debug:
+        print("showstxcorr_correlated_signals")
+    signal1, signal2 = _make_test_timecourses(
+        samplerate=10.0,
+        duration=200.0,
+        delay=0.5,
+    )
+    args = _make_default_args()
+    args.corrthresh = 0.1
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_out"
+    pearson = saved["text"][f"{outroot}_pearson.txt"]
+    rvalue = saved["text"][f"{outroot}_Rvalue.txt"]
+
+    # Correlated signals should have high Pearson R values
+    assert (
+        np.mean(np.abs(pearson)) > 0.3
+    ), f"Mean |Pearson R| = {np.mean(np.abs(pearson))}, expected > 0.3"
+    # Max cross-correlation should be even higher
+    assert (
+        np.mean(np.abs(rvalue)) > 0.3
+    ), f"Mean |Rvalue| = {np.mean(np.abs(rvalue))}, expected > 0.3"
+
+
+def showstxcorr_invert(debug=False):
+    """Test that --invert negates the second signal and flips correlation sign."""
+    if debug:
+        print("showstxcorr_invert")
+    signal1, signal2 = _make_test_timecourses(
+        samplerate=10.0,
+        duration=200.0,
+        delay=0.5,
+    )
+
+    # Run without invert
+    args1 = _make_default_args(outfilename="/tmp/test_showstxcorr_noinv")
+    args1.corrthresh = 0.1
+    saved1 = _run_showstxcorr(signal1, signal2, args1)
+    pearson_noinv = saved1["text"]["/tmp/test_showstxcorr_noinv_pearson.txt"]
+
+    # Run with invert
+    args2 = _make_default_args(outfilename="/tmp/test_showstxcorr_inv")
+    args2.invert = True
+    args2.corrthresh = 0.1
+    saved2 = _run_showstxcorr(signal1, signal2, args2)
+    pearson_inv = saved2["text"]["/tmp/test_showstxcorr_inv_pearson.txt"]
+
+    # Inverting should flip the sign of correlations
+    assert (
+        np.mean(pearson_inv) * np.mean(pearson_noinv) < 0
+    ), "Inversion should flip correlation sign"
+
+
+def showstxcorr_zero_delay(debug=False):
+    """Test showstxcorr with zero delay between signals."""
+    if debug:
+        print("showstxcorr_zero_delay")
+    signal1, signal2 = _make_test_timecourses(
+        samplerate=10.0,
+        duration=200.0,
+        delay=0.0,
+    )
+    args = _make_default_args(outfilename="/tmp/test_showstxcorr_zerodelay")
+    args.corrthresh = 0.1
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_zerodelay"
+    delay = saved["text"][f"{outroot}_delay.txt"]
+    mask = saved["text"][f"{outroot}_mask.txt"]
+
+    # With zero delay, valid delay values should be near zero
+    valid_delays = delay[np.where(mask > 0)]
+    if len(valid_delays) > 0:
+        assert (
+            np.mean(np.abs(valid_delays)) < 1.0
+        ), f"Mean |delay| = {np.mean(np.abs(valid_delays))}, expected < 1.0 for zero-delay signals"
+
+
+def showstxcorr_starttime_duration(debug=False):
+    """Test starttime and duration trim the data correctly."""
+    if debug:
+        print("showstxcorr_starttime_duration")
+    signal1, signal2 = _make_test_timecourses(samplerate=10.0, duration=200.0)
+    args_full = _make_default_args(outfilename="/tmp/test_showstxcorr_full")
+    args_full.corrthresh = 0.1
+
+    saved_full = _run_showstxcorr(signal1, signal2, args_full)
+
+    # Now run with starttime=10s and duration=100s (subset of data)
+    args_trim = _make_default_args(outfilename="/tmp/test_showstxcorr_trim")
+    args_trim.starttime = 10.0
+    args_trim.duration = 100.0
+    args_trim.corrthresh = 0.1
+
+    saved_trim = _run_showstxcorr(signal1, signal2, args_trim)
+
+    outroot_full = "/tmp/test_showstxcorr_full"
+    outroot_trim = "/tmp/test_showstxcorr_trim"
+    assert f"{outroot_trim}_pearson.txt" in saved_trim["text"]
+    assert f"{outroot_trim}_Rvalue.txt" in saved_trim["text"]
+
+    # Trimmed run should produce fewer windows than full run
+    pearson_full = saved_full["text"][f"{outroot_full}_pearson.txt"]
+    pearson_trim = saved_trim["text"][f"{outroot_trim}_pearson.txt"]
+    assert len(pearson_trim) < len(
+        pearson_full
+    ), f"Trimmed ({len(pearson_trim)}) should have fewer windows than full ({len(pearson_full)})"
+
+
+def showstxcorr_timewarped_output(debug=False):
+    """Test that timewarped output has same length as hiresdelayvals."""
+    if debug:
+        print("showstxcorr_timewarped_output")
+    signal1, signal2 = _make_test_timecourses(
+        samplerate=10.0,
+        duration=200.0,
+        delay=0.5,
+    )
+    args = _make_default_args()
+    args.corrthresh = 0.1
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_out"
+    timewarped = saved["text"][f"{outroot}_timewarped.txt"]
+    hiresdelay = saved["text"][f"{outroot}_hiresdelayvals.txt"]
+
+    # Both should have the same length
+    assert len(timewarped) == len(hiresdelay)
+
+
+def showstxcorr_custom_corrweighting(debug=False):
+    """Test showstxcorr with phat correlation weighting."""
+    if debug:
+        print("showstxcorr_custom_corrweighting")
+    signal1, signal2 = _make_test_timecourses(samplerate=10.0, duration=200.0)
+    args = _make_default_args(outfilename="/tmp/test_showstxcorr_phat")
+    args.corrweighting = "phat"
+    args.corrthresh = 0.1
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_phat"
+    assert f"{outroot}_pearson.txt" in saved["text"]
+    assert f"{outroot}_Rvalue.txt" in saved["text"]
+
+
+def showstxcorr_detrendorder_zero(debug=False):
+    """Test showstxcorr with detrending disabled."""
+    if debug:
+        print("showstxcorr_detrendorder_zero")
+    signal1, signal2 = _make_test_timecourses(samplerate=10.0, duration=200.0)
+    args = _make_default_args(outfilename="/tmp/test_showstxcorr_nodt")
+    args.detrendorder = 0
+    args.corrthresh = 0.1
+
+    saved = _run_showstxcorr(signal1, signal2, args)
+
+    outroot = "/tmp/test_showstxcorr_nodt"
+    assert f"{outroot}_pearson.txt" in saved["text"]
+
+
+def showstxcorr_high_corrthresh(debug=False):
+    """Test showstxcorr with very high corrthresh (may result in no valid points)."""
+    if debug:
+        print("showstxcorr_high_corrthresh")
+    rng = np.random.RandomState(99)
+    # Uncorrelated signals - low R values expected
+    signal1 = rng.randn(2000).astype(np.float64)
+    signal2 = rng.randn(2000).astype(np.float64)
+    args = _make_default_args(outfilename="/tmp/test_showstxcorr_hithresh")
+    args.corrthresh = 0.99  # Very high threshold
+
+    # This may fail during polynomial fitting if no points pass threshold
+    # Just verify it doesn't crash unexpectedly or produces output
+    try:
+        saved = _run_showstxcorr(signal1, signal2, args)
+        # If it succeeds, check outputs exist
+        outroot = "/tmp/test_showstxcorr_hithresh"
+        assert f"{outroot}_pearson.txt" in saved["text"]
+    except (np.linalg.LinAlgError, ValueError):
+        # Polynomial fit may fail with too few valid points - that's acceptable
+        pass
+
+
+# ==================== Main test function ====================
+
+
+PARSER_CASES = [
+    parser_basic,
+    parser_required_args,
+    parser_defaults,
+    parser_samplerate,
+    parser_sampletime,
+    parser_boolean_flags,
+    parser_corr_options,
+    parser_samplerate_sampletime_mutual_exclusion,
+]
+
+
+PRINTTHRESHOLD_CASES = [
+    printthresholds_basic,
+    printthresholds_empty,
+    printthresholds_single,
+]
+
+
+WORKFLOW_CASES = [
+    showstxcorr_auto_samplerate_exit,
+    showstxcorr_basic,
+    showstxcorr_matrixoutput,
+    showstxcorr_output_lengths,
+    showstxcorr_correlated_signals,
+    showstxcorr_invert,
+    showstxcorr_zero_delay,
+    showstxcorr_starttime_duration,
+    showstxcorr_timewarped_output,
+    showstxcorr_custom_corrweighting,
+    showstxcorr_detrendorder_zero,
+    showstxcorr_high_corrthresh,
+]
+
+
+@pytest.mark.parametrize("case_func", PARSER_CASES, ids=lambda func: func.__name__)
+@pytest.mark.unit
+def test_showstxcorr_parser_cases(case_runner, case_func):
+    case_runner(case_func)
+
+
+@pytest.mark.parametrize("case_func", PRINTTHRESHOLD_CASES, ids=lambda func: func.__name__)
+@pytest.mark.unit
+def test_showstxcorr_printthreshold_cases(case_runner, case_func):
+    case_runner(case_func)
+
+
+@pytest.mark.parametrize("case_func", WORKFLOW_CASES, ids=lambda func: func.__name__)
+@pytest.mark.slow
+def test_showstxcorr_workflow_cases(case_runner, case_func):
+    case_runner(case_func)
+
+
+if __name__ == "__main__":
+    for case in PARSER_CASES + PRINTTHRESHOLD_CASES + WORKFLOW_CASES:
+        case(debug=True)

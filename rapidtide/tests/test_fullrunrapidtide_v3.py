@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -19,19 +19,27 @@
 import os
 
 import matplotlib as mpl
+import pytest
 
-import rapidtide.workflows.rapidtide as rapidtide_workflow
-import rapidtide.workflows.rapidtide_parser as rapidtide_parser
-from rapidtide.tests.utils import get_examples_path, get_test_temp_path
+from rapidtide.tests.utils import (
+    get_example_and_temp_roots,
+    run_rapidtide,
+    run_retroregress,
+)
+
+pytestmark = pytest.mark.slow
 
 
-def test_fullrunrapidtide_v3(debug=False, displayplots=False):
+def test_fullrunrapidtide_v3(debug=False, local=False, displayplots=False):
+    # set input and output directories
+    exampleroot, testtemproot = get_example_and_temp_roots(local)
+
     # run rapidtide
     inputargs = [
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST.nii.gz"),
-        os.path.join(get_test_temp_path(), "sub-RAPIDTIDETEST3"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST.nii.gz"),
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST3"),
         "--corrmask",
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST_restrictedmask.nii.gz:1"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST_restrictedmask.nii.gz:1"),
         "--maxpasses",
         "2",
         "--numnull",
@@ -40,11 +48,12 @@ def test_fullrunrapidtide_v3(debug=False, displayplots=False):
         "pca",
         "--convergencethresh",
         "0.5",
-        "--noglm",
+        "--nodenoise",
         "--nprocs",
         "-1",
         "--similaritymetric",
         "mutualinfo",
+        "--norefinedelay",
         "--dpoutput",
         "--spcalculation",
         "--simcalcrange",
@@ -59,15 +68,25 @@ def test_fullrunrapidtide_v3(debug=False, displayplots=False):
         "R",
         "--regressor",
         os.path.join(
-            get_examples_path(),
+            exampleroot,
             "sub-RAPIDTIDETEST_desc-oversampledmovingregressor_timeseries.json:pass3",
         ),
     ]
     #    "--psdfilter",
     #    "--cleanrefined",
-    rapidtide_workflow.rapidtide_main(rapidtide_parser.process_args(inputargs=inputargs))
+    run_rapidtide(inputargs)
+
+    inputargs = [
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST.nii.gz"),
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST3"),
+        "--alternateoutput",
+        os.path.join(testtemproot, "onlyregressors"),
+        "--outputlevel",
+        "onlyregressors",
+    ]
+    run_retroregress(inputargs)
 
 
 if __name__ == "__main__":
     mpl.use("TkAgg")
-    test_fullrunrapidtide_v3(debug=True, displayplots=True)
+    test_fullrunrapidtide_v3(debug=True, local=True, displayplots=True)

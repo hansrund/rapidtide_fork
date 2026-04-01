@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 #
 #
 import argparse
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from matplotlib.pyplot import *
 from tqdm import tqdm
@@ -26,7 +28,32 @@ import rapidtide.io as tide_io
 import rapidtide.workflows.parser_funcs as pf
 
 
-def _get_parser():
+def _get_parser() -> Any:
+    """
+    Create and configure an argument parser for the spatialfit command-line tool.
+
+    This function sets up an `argparse.ArgumentParser` with specific arguments
+    required for fitting a 3D or 4D NIFTI file to a spatial template. It includes
+    validation for file inputs and supports optional masking and fitting parameters.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser with defined command-line arguments.
+
+    Notes
+    -----
+    The parser is configured with:
+    - Required positional arguments: `datafile`, `templatefile`, and `outputroot`.
+    - Optional arguments: `--datamask`, `--templatemask`, `--order`, and `--debug`.
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['data.nii', 'template.nii', 'output_root'])
+    >>> print(args.datafile)
+    'data.nii'
+    """
     # get the command line parameters
     parser = argparse.ArgumentParser(
         prog="spatialfit",
@@ -80,7 +107,55 @@ def _get_parser():
     return parser
 
 
-def spatialfit(args):
+def spatialfit(args: Any) -> None:
+    """
+    Perform spatial fitting of fMRI data using a template-based linear regression model.
+
+    This function reads input data and template files, performs masking, and fits a
+    linear model at each spatial location to estimate spatially varying linear coefficients,
+    offsets, and R² values. It outputs time series of these parameters along with fitted,
+    residual, and normalized data volumes.
+
+    Parameters
+    ----------
+    args : Any
+        Parsed command-line arguments. Expected to contain the following attributes:
+        - datafile : str
+            Path to the input NIfTI data file.
+        - templatefile : str
+            Path to the template NIfTI file.
+        - dmask : str, optional
+            Path to the data mask NIfTI file.
+        - tmask : str, optional
+            Path to the template mask NIfTI file.
+        - outputroot : str
+            Root name for output files.
+        - debug : bool, optional
+            Enable debug printing.
+
+    Returns
+    -------
+    None
+        This function does not return a value but writes multiple NIfTI and text files
+        to disk.
+
+    Notes
+    -----
+    The function assumes that the input data and template files have compatible
+    spatial dimensions. It performs a linear regression for each timepoint and
+    stores the resulting coefficients, offsets, and R² values.
+
+    Examples
+    --------
+    >>> import argparse
+    >>> args = argparse.Namespace(
+    ...     datafile='data.nii.gz',
+    ...     templatefile='template.nii.gz',
+    ...     outputroot='output',
+    ...     debug=False
+    ... )
+    >>> spatialfit(args)
+    """
     # get the command line parameters
     try:
         args = _get_parser().parse_args()
@@ -169,7 +244,7 @@ def spatialfit(args):
     if args.tmask is not None:
         rs_templatemask = templatemask_data.reshape((numspatiallocs, 1))
     else:
-        rs_templatemask = np.ones((numspatiallocs, timepoints), dtype="float")
+        rs_templatemask = np.ones((numspatiallocs, 1), dtype="float")
 
     bin_templatemask = np.where(rs_templatemask > 0.1, 1.0, 0.0)
 
@@ -180,7 +255,7 @@ def spatialfit(args):
     newmask = np.zeros((numspatiallocs), dtype="float")
     lincoffs = np.zeros((timepoints), dtype="float")
     offsets = np.zeros((timepoints), dtype="float")
-    rvals = np.zeros((timepoints), dtype="float")
+    r2vals = np.zeros((timepoints), dtype="float")
 
     if args.debug:
         print(fitdata.shape)
@@ -190,7 +265,7 @@ def spatialfit(args):
         print(newmask.shape)
         print(lincoffs.shape)
         print(offsets.shape)
-        print(rvals.shape)
+        print(r2vals.shape)
 
     # mask everything
     print("masking data and template")
@@ -215,10 +290,10 @@ def spatialfit(args):
     ):
         if args.debug:
             print("fitting")
-        thefit, R = tide_fit.mlregress(maskedtemplate[:, 0], maskeddata[:, thetime])
+        thefit, R2 = tide_fit.mlregress(maskedtemplate[:, 0], maskeddata[:, thetime])
         lincoffs[thetime] = thefit[0, 1]
         offsets[thetime] = thefit[0, 0]
-        rvals[thetime] = R
+        r2vals[thetime] = R2
         if args.debug:
             print("generating fit data")
             print(
@@ -241,7 +316,7 @@ def spatialfit(args):
     print("writing time series")
     tide_io.writenpvecs(lincoffs, args.outputroot + "_lincoffs.txt")
     tide_io.writenpvecs(offsets, args.outputroot + "_offsets.txt")
-    tide_io.writenpvecs(rvals, args.outputroot + "_rvals.txt")
+    tide_io.writenpvecs(r2vals, args.outputroot + "_r2vals.txt")
     print("slope mean, std:", np.mean(lincoffs), np.std(lincoffs))
     print("offset mean, std:", np.mean(offsets), np.std(offsets))
 

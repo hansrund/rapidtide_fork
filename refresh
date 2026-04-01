@@ -1,7 +1,14 @@
 #!/bin/bash
 
+# Checkout current state
 git pull
-cleandirs
+
+# remove any previously installed versions
+./cleandirs
+
+# install the package
+#pip install -e .
 pip install .
-chmod -R u+rwx build
-rm -rf build dist rapidtide.egg-info
+
+# remove the build directory
+rm -rf rapidtide.egg-info build

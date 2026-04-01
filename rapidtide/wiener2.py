@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 from numpy.fft import fft, ifft, ifftshift
+from numpy.typing import NDArray
 
 plt.rcParams.update({"font.size": 6})
 
@@ -43,8 +44,42 @@ lambd_est = 1e-3  # estimated noise lev
 ##########################
 
 
-def gen_son(length):
-    "Generate a synthetic un-reverberated 'sound event' template"
+def gen_son(length: int) -> NDArray:
+    """
+    Generate a synthetic un-reverberated 'sound event' template.
+
+    This function creates a synthetic sound template by generating white noise,
+    integrating it, applying an envelope, and normalizing the result.
+
+    Parameters
+    ----------
+    length : int
+        The length of the output array in samples.
+
+    Returns
+    -------
+    NDArray
+        A normalized synthetic sound event template of shape (length,) containing
+        floating point values.
+
+    Notes
+    -----
+    The generated sound template follows these steps:
+    1. Generate white noise using random.randn
+    2. Integrate the noise using cumulative sum
+    3. Apply a triangular envelope with 12.5% attack time
+    4. Normalize the result to unit energy
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> son = gen_son(1000)
+    >>> print(son.shape)
+    (1000,)
+    >>> print(f"Energy: {np.sum(son * son):.2f}")
+    Energy: 1.00
+    """
+    # "Generate a synthetic un-reverberated 'sound event' template"
     # (whitenoise -> integrate -> envelope -> normalise)
     son = np.cumsum(np.random.randn(length))
     # apply envelope
@@ -55,8 +90,43 @@ def gen_son(length):
     return son
 
 
-def gen_ir(length):
-    "Generate a synthetic impulse response"
+def gen_ir(length: int) -> NDArray:
+    """
+    Generate a synthetic impulse response.
+
+    This function creates a synthetic impulse response with a quiet tail, attack envelope,
+    direct signal component, and early reflection spikes. The resulting impulse response
+    is normalized to unit energy.
+
+    Parameters
+    ----------
+    length : int
+        The length of the impulse response array to generate.
+
+    Returns
+    -------
+    NDArray
+        A normalized numpy array of shape (length,) representing the synthetic impulse response.
+
+    Notes
+    -----
+    The generated impulse response includes:
+    - A quiet tail with random noise
+    - An attack envelope that rises from 0.1 to 1 and then falls back to 0.1
+    - A direct signal component at index 5 with amplitude 1
+    - 10 early reflection spikes with random positions and amplitudes
+    - Normalization to unit energy (L2 norm equals 1)
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> ir = gen_ir(100)
+    >>> print(ir.shape)
+    (100,)
+    >>> print(np.isclose(np.sum(ir * ir), 1.0))
+    True
+    """
+    # "Generate a synthetic impulse response"
     # First we generate a quietish tail
     son = np.random.randn(length)
     attacklen = int(length // 2)
@@ -73,8 +143,44 @@ def gen_ir(length):
     return son
 
 
-def wiener_deconvolution(signal, kernel, lambd):
-    "lambd is the SNR"
+def wiener_deconvolution(signal: NDArray, kernel: NDArray, lambd: float) -> NDArray:
+    """
+    Perform Wiener deconvolution on a signal.
+
+    Wiener deconvolution is a method for reversing the effects of convolution
+    in the presence of noise. It uses a regularization parameter to balance
+    between deconvolution accuracy and noise amplification.
+
+    Parameters
+    ----------
+    signal : NDArray
+        Input signal to be deconvolved, assumed to be 1D.
+    kernel : NDArray
+        Convolution kernel (point spread function), assumed to be 1D.
+    lambd : float
+        Regularization parameter (signal-to-noise ratio). Higher values
+        result in more smoothing and less noise amplification.
+
+    Returns
+    -------
+    NDArray
+        Deconvolved signal with same length as input signal.
+
+    Notes
+    -----
+    The function zero-pads the kernel to match the signal length before
+    performing frequency domain operations. The Wiener filter is applied
+    in the frequency domain using the formula:
+    output = real(ifft(fft(signal) * conj(H) / (|H|² + λ²)))
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> signal = np.array([1, 2, 3, 2, 1])
+    >>> kernel = np.array([1, 0.5, 0.25])
+    >>> result = wiener_deconvolution(signal, kernel, lambd=0.1)
+    """
+    # "lambd is the SNR"
     kernel = np.hstack(
         (kernel, np.zeros(len(signal) - len(kernel)))
     )  # zero pad the kernel to same length
@@ -84,7 +190,7 @@ def wiener_deconvolution(signal, kernel, lambd):
 
 
 if __name__ == "__main__":
-    "simple test: get one soundtype and one impulse response, convolve them, deconvolve them, and check the result (plot it!)"
+    # "simple test: get one soundtype and one impulse response, convolve them, deconvolve them, and check the result (plot it!)"
     son = gen_son(sonlen)
     ir = gen_ir(irlen)
     obs = np.convolve(son, ir, mode="full")

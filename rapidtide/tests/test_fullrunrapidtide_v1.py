@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2016-2024 Blaise Frederick
+#   Copyright 2016-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -19,33 +19,83 @@
 import os
 
 import matplotlib as mpl
+import pytest
 
 import rapidtide.qualitycheck as rapidtide_quality
-import rapidtide.workflows.rapidtide as rapidtide_workflow
-import rapidtide.workflows.rapidtide_parser as rapidtide_parser
-from rapidtide.tests.utils import get_examples_path, get_test_temp_path
+from rapidtide.tests.utils import get_example_and_temp_roots, run_rapidtide
+
+pytestmark = pytest.mark.slow
 
 
-def test_fullrunrapidtide_v1(debug=False, displayplots=False):
+def test_fullrunrapidtide_v1(debug=False, local=False, displayplots=False):
+    # set input and output directories
+    exampleroot, testtemproot = get_example_and_temp_roots(local)
+
     # run rapidtide
     inputargs = [
-        os.path.join(get_examples_path(), "sub-RAPIDTIDETEST.nii.gz"),
-        os.path.join(get_test_temp_path(), "sub-RAPIDTIDETEST1"),
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST.nii.gz"),
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST1"),
         "--spatialfilt",
         "2",
-        "--numtozero",
+        "--simcalcrange",
         "4",
+        "-1",
+        "--nprocs",
+        "-1",
+        "--passes",
+        "2",
+        "--despecklepasses",
+        "3",
+        "--delaypatchthresh",
+        "4.0",
+    ]
+    run_rapidtide(inputargs)
+    rapidtide_quality.qualitycheck(os.path.join(testtemproot, "sub-RAPIDTIDETEST1"))
+
+    # test fixval
+    inputargs = [
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST.nii.gz"),
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST1_fixval"),
+        "--spatialfilt",
+        "2",
+        "--simcalcrange",
+        "4",
+        "-1",
         "--nprocs",
         "-1",
         "--passes",
         "1",
         "--despecklepasses",
         "3",
+        "--nodenoise",
+        "--norefinedelay",
+        "--initialdelay",
+        "0.0",
     ]
-    rapidtide_workflow.rapidtide_main(rapidtide_parser.process_args(inputargs=inputargs))
-    rapidtide_quality.qualitycheck(os.path.join(get_test_temp_path(), "sub-RAPIDTIDETEST1"))
+    run_rapidtide(inputargs)
+
+    # test fixmap
+    inputargs = [
+        os.path.join(exampleroot, "sub-RAPIDTIDETEST.nii.gz"),
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST1_fixmap"),
+        "--spatialfilt",
+        "2",
+        "--simcalcrange",
+        "4",
+        "-1",
+        "--nprocs",
+        "-1",
+        "--passes",
+        "1",
+        "--despecklepasses",
+        "3",
+        "--nodenoise",
+        "--initialdelay",
+        os.path.join(testtemproot, "sub-RAPIDTIDETEST1_desc-maxtime_map.nii.gz"),
+    ]
+    run_rapidtide(inputargs)
 
 
 if __name__ == "__main__":
     mpl.use("TkAgg")
-    test_fullrunrapidtide_v1(debug=True, displayplots=True)
+    test_fullrunrapidtide_v1(debug=True, local=True, displayplots=True)

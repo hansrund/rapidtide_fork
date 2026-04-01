@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#   Copyright 2024-2024 Blaise Frederick
+#   Copyright 2024-2026 Blaise Frederick
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 #
 #
 import argparse
+from argparse import Namespace
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -24,9 +26,29 @@ import rapidtide.io as tide_io
 import rapidtide.stats as tide_stats
 
 
-def _get_parser():
+def _get_parser() -> Any:
     """
-    Argument parser for mergequality
+    Argument parser for mergequality.
+
+    Creates and configures an argument parser for the mergequality tool that merges
+    rapidtide quality check data from multiple runs.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Configured argument parser object with all required and optional arguments
+        for the mergequality tool.
+
+    Notes
+    -----
+    The returned parser is configured with:
+    - Required arguments: --input and --outputroot
+    - Optional arguments: --keyfile, --showhists, --addgraymetrics, --addwhitemetrics, --debug
+
+    Examples
+    --------
+    >>> parser = _get_parser()
+    >>> args = parser.parse_args(['--input', 'run1.csv', 'run2.csv', '--outputroot', 'merged'])
     """
     parser = argparse.ArgumentParser(
         prog="mergequality",
@@ -68,7 +90,61 @@ def _get_parser():
     return parser
 
 
-def mergequality(args):
+def mergequality(args: Any) -> None:
+    """
+    Merge quality metrics from multiple input JSON files into a single CSV file.
+
+    This function reads quality metrics from input JSON files and combines them
+    into a structured DataFrame. It supports optional inclusion of gray and white
+    matter specific metrics based on command-line arguments. Histograms for each
+    metric are also generated and saved.
+
+    Parameters
+    ----------
+    args : Any
+        An object containing the following attributes:
+        - input : list of str
+            List of input JSON file paths to process.
+        - outputroot : str
+            Base name for output CSV and histogram files.
+        - keyfile : str, optional
+            Path to a JSON file containing key metrics definitions. If None,
+            default metrics are used.
+        - addgraymetrics : bool
+            Whether to include gray matter specific metrics.
+        - addwhitemetrics : bool
+            Whether to include white matter specific metrics.
+        - showhists : bool
+            Whether to display histograms.
+        - debug : bool
+            Whether to print debug information.
+
+    Returns
+    -------
+    None
+        This function does not return a value but saves a CSV file and histogram
+        plots to disk.
+
+    Notes
+    -----
+    The function uses `tide_io.readdictfromjson` to read input JSON files and
+    `tide_stats.makeandsavehistogram` to generate histograms. Default metrics
+    are included for mask, regressor, lag, laggrad, strength, and MTT.
+    Gray and white matter metrics are conditionally added based on `args`.
+
+    Examples
+    --------
+    >>> args = type('Args', (), {
+    ...     'input': ['file1.json', 'file2.json'],
+    ...     'outputroot': 'output',
+    ...     'keyfile': None,
+    ...     'addgraymetrics': True,
+    ...     'addwhitemetrics': False,
+    ...     'showhists': True,
+    ...     'debug': False
+    ... })()
+    >>> mergequality(args)
+    """
     if args.debug:
         print(f"{args.input=}")
         print(f"{args.outputroot=}")
@@ -113,6 +189,11 @@ def mergequality(args):
                 "pct50": -0.1257154777049373,
                 "pct75": 1.0872777685344683,
                 "pct98": 5.428974111640412,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 0.268346902434662,
                 "peakloc": -0.32178217821782207,
                 "peakpercentile": 44.776762347666185,
@@ -132,6 +213,11 @@ def mergequality(args):
                 "pct50": 0.41670054269474405,
                 "pct75": 0.7196355014183266,
                 "pct98": 2.445977359086096,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 1.7495682765313678,
                 "peakloc": 0.2524752475247525,
                 "peakpercentile": 24.97466346179356,
@@ -151,6 +237,11 @@ def mergequality(args):
                 "pct50": 0.35605876676999876,
                 "pct75": 0.5108963405705843,
                 "pct98": 0.7675960511390326,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 1.9180975584901625,
                 "peakloc": 0.2722772277227723,
                 "peakpercentile": 34.364100402517934,
@@ -170,6 +261,11 @@ def mergequality(args):
                 "pct50": 0.0,
                 "pct75": 0.9117823500153743,
                 "pct98": 2.835547357601372,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 0.33323899429333736,
                 "peakloc": 0.8415841584158417,
                 "peakpercentile": 39.06788519856343,
@@ -192,6 +288,11 @@ def mergequality(args):
                 "pct50": 0.40468708058815667,
                 "pct75": 2.5020675667656325,
                 "pct98": 35.65786745845405,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 0.20154056103108517,
                 "peakloc": -0.7673267326732676,
                 "peakpercentile": 31.311237290373697,
@@ -211,6 +312,11 @@ def mergequality(args):
                 "pct50": 0.4080402253691755,
                 "pct75": 0.9014255193901806,
                 "pct98": 12.105429775628355,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 2.137460662083183,
                 "peakloc": 0.22277227722772275,
                 "peakpercentile": 22.70194611181395,
@@ -230,6 +336,11 @@ def mergequality(args):
                 "pct50": 0.4652726794639804,
                 "pct75": 0.5657461961283083,
                 "pct98": 0.7482491589950304,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 2.6820414630925633,
                 "peakloc": 0.4900990099009901,
                 "peakpercentile": 56.33302522118051,
@@ -252,6 +363,11 @@ def mergequality(args):
                 "pct50": 0.40468708058815667,
                 "pct75": 2.5020675667656325,
                 "pct98": 35.65786745845405,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 0.20154056103108517,
                 "peakloc": -0.7673267326732676,
                 "peakpercentile": 31.311237290373697,
@@ -271,6 +387,11 @@ def mergequality(args):
                 "pct50": 0.4080402253691755,
                 "pct75": 0.9014255193901806,
                 "pct98": 12.105429775628355,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 2.137460662083183,
                 "peakloc": 0.22277227722772275,
                 "peakpercentile": 22.70194611181395,
@@ -290,6 +411,11 @@ def mergequality(args):
                 "pct50": 0.4652726794639804,
                 "pct75": 0.5657461961283083,
                 "pct98": 0.7482491589950304,
+                "q1width": -3.5552243631332305,
+                "q2width": -1.114490891184175,
+                "q3width": -0.1257154777049373,
+                "q4width": 1.0872777685344683,
+                "mid50width": 5.428974111640412,
                 "peakheight": 2.6820414630925633,
                 "peakloc": 0.4900990099009901,
                 "peakpercentile": 56.33302522118051,

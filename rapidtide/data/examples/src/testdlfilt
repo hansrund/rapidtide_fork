@@ -1,0 +1,25 @@
+#!/bin/bash
+
+MACHINE=$(uname -a | awk '{print $2}')
+if [ ${MACHINE} == "mickey" ]; then
+    echo "running on mickey"
+    ROOT=/home/frederic/code/rapidtide/rapidtide
+else
+    echo "not running on mickey"
+    ROOT=/Users/frederic/code/rapidtide/rapidtide
+fi
+
+MODELROOT=${ROOT}/experimental
+MODELROOT=${ROOT}/data/models
+
+cd ${MODELROOT}
+for MODEL in model_*_pytorch*
+do
+    echo model: ${MODELROOT}/${MODEL}
+    applydlfilter \
+        ${ROOT}/data/examples/src/happy_desc-stdrescardfromfmri_timeseries.json \
+        ${ROOT}/data/examples/dst/${MODEL}_filtered \
+        --model ${MODELROOT}/${MODEL}
+    echo
+    echo
+done
