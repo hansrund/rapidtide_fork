@@ -402,6 +402,12 @@ def cleanphysio(
         if nyquist < arb_upper:
             arb_upper = nyquist
             arb_upperstop = nyquist
+            ### MANUAL ADDITION BY HC 
+            ### --> Our slice sampling rate is very low,
+            ###     hence we have a problem with the nyquist freq being 
+            ###     in the filter band.. -> Set arb_upperpass manually to be lower then upper stop
+            if arb_upperstop<arb_upperpass:
+                arb_upperpass=0.95*arb_upperstop
     physiofilter.setfreqs(arb_lowerstop, arb_lowerpass, arb_upperpass, arb_upperstop)
     filtphysiowaveform = tide_math.madnormalize(
         physiofilter.apply(Fs, tide_math.madnormalize(physiowaveform))
@@ -912,7 +918,7 @@ def cardiaccycleaverage(
     for t in procpoints:
         thevals, theweights, theindices = tide_resample.congrid(
             destinationphases,
-            tide_math.phasemod(sourcephases[t], centric=centric),
+            tide_math.phasemod(sourcephases[t], centric=centric),   # Wrap phase
             1.0,
             congridbins,
             kernel=gridkernel,
